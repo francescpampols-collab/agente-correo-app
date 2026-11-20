@@ -480,7 +480,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=44"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=45"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -512,7 +512,13 @@ async function bajarFichero(mid, adj) {
   return ficheros.get(clave);
 }
 async function descargar(mid, adj) {
-  const url = URL.createObjectURL(await bajarFichero(mid, adj));
+  const fichero = await bajarFichero(mid, adj);
+  // Dentro de la aplicación Android no hay descargas de navegador: el adjunto se entrega a la app, que lo abre.
+  if (window.agenteApk && window.agenteAndroid && typeof window.agenteAndroid.postMessage === "function") {
+    window.agenteAndroid.postMessage(JSON.stringify({tipo: "fichero", nombre: adj.name || "adjunto", mime: adj.contentType || fichero.type || "", datos: await aBase64(fichero)}));
+    return;
+  }
+  const url = URL.createObjectURL(fichero);
   const a = el("a", {href: url, download: adj.name});
   document.body.append(a);
   a.click();
