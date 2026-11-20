@@ -14,12 +14,12 @@ const IA_MODELOS = ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", 
 const IA_NOMBRES = {"claude-fable-5-2": "Fable 5.2", "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5"};
 const ESTILO_BASE = "Muy corto y directo, al grano en la primera frase. Idioma: catalán con el equipo interno de Pampols y con empresas catalanas; castellano con proveedores de fuera; inglés si le escriben en inglés. Saludo «Hola [nombre],» o ninguno. Cierre «Gràcies,» o «Gracias,» y en la línea siguiente «Francesc». Sin fórmulas de relleno, sin guiones largos, sin listas ni negritas.";
 const CAT = {resp: "Agente: responder", news: "Agente: boletín", arch: "Agente: archivar", pend: "Agente: pendiente", baja: "Agente: baja", manual: "Agente: baja manual"};
-const PESTANAS = [["resp", "Responder"], ["news", "Boletines"], ["arch", "Archivar"], ["pend", "Tuyos"]];
+const PESTANAS = [["nuevo", "Nuevos"], ["resp", "Responder"], ["news", "Boletines"], ["arch", "Archivar"], ["pend", "Tuyos"]];
 const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read";
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
+const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -175,8 +175,15 @@ async function listarTodo() {
     m.singleValueExtendedProperties = todas.filter((x) => !/^Integer/i.test(x.id || ""));
   }
   await completar(lista);
+  // Lo recién llegado que el agente aún no ha clasificado: se enseña ya, sin esperar a su siguiente pasada.
+  let nuevo = [];
+  try {
+    const r = await api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink", "$orderby": "receivedDateTime desc", "$top": "50"}));
+    nuevo = (r.value || []).filter((m) => !(m.categories || []).some((c) => c.startsWith("Agente:")));
+    nuevo.forEach((m) => { m.sinClasificar = true; });
+  } catch (e) {}
   const de = (e) => lista.filter((m) => (m.categories || []).includes(e));
-  return {resp: de(CAT.resp), news: de(CAT.news), arch: de(CAT.arch), pend: de(CAT.pend).concat(de(CAT.manual))};
+  return {nuevo, resp: de(CAT.resp), news: de(CAT.news), arch: de(CAT.arch), pend: de(CAT.pend).concat(de(CAT.manual))};
 }
 // En los listados Outlook corta la propiedad a 255 caracteres. Las que llegan
 // cortadas se vuelven a pedir enteras, de cuatro en cuatro (el tope de Outlook).
@@ -217,8 +224,10 @@ async function leerCarpetas() {
   return mapa;
 }
 function carpetaDe(m) {
-  const d = prop(m).destino;
-  return typeof d === "string" && estado.carpetas && estado.carpetas[d] ? {nombre: d, id: estado.carpetas[d]} : {nombre: "Archivo", id: "archive"};
+  let d = prop(m).destino;
+  // Sin clasificar todavía: internos (empresas del grupo) o externos según el dominio del remitente.
+  if (typeof d !== "string") d = /@(pampols\.es|optimalpkg\.com|pampols\.fr)$/i.test(dir(m)) ? "Interns" : "Externs";
+  return estado.carpetas && estado.carpetas[d] ? {nombre: d, id: estado.carpetas[d]} : {nombre: "Archivo", id: "archive"};
 }
 async function cargar() {
   $("recargar").disabled = true;
@@ -234,7 +243,7 @@ async function cargar() {
   pintar();
   quienSoy().then(precargar);
 }
-function todos() { return [].concat(estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
+function todos() { return [].concat(estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
 function quitar(ids) {
   for (const k of Object.keys(estado.datos)) estado.datos[k] = estado.datos[k].filter((m) => !ids.includes(m.id));
   if (ids.includes(estado.sel)) cerrar();
@@ -423,7 +432,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=25"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=26"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -527,7 +536,7 @@ function cartaSimple(m) {
     remitente(m),
     titulo(m),
     marcas(m),
-    p.pide ? el("p", {class: "pide"}, p.pide) : null,
+    p.pide ? el("p", {class: "pide"}, p.pide) : m.sinClasificar && extracto(m) ? el("p", {class: "pide"}, extracto(m).slice(0, 180)) : null,
     p.aviso ? el("span", {class: "aviso"}, p.aviso) : null,
     el("div", {class: "fila"},
       baja ? el("a", {class: "plano", href: baja.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir la baja en " + baja.hostname) : null,
@@ -955,7 +964,7 @@ function pintarDetalle() {
 function pintar() {
   const d = estado.datos;
   const g = grupos();
-  const n = {resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length};
+  const n = {nuevo: d.nuevo.length, resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length};
   $("resumen").textContent = `${n.resp} ${n.resp === 1 ? "respuesta lista" : "respuestas listas"} y ${d.news.length + n.arch} para archivar`;
   $("pestanas").replaceChildren(...PESTANAS.map(([k, t]) => el("button", {type: "button", "aria-pressed": String(estado.tab === k), onclick: () => { estado.tab = k; estado.confirma = false; pintar(); }}, t, el("span", {class: "cuenta"}, String(n[k])))));
   let cartas;
@@ -969,7 +978,8 @@ function pintar() {
         el("button", {class: "plano corto", type: "button", onclick: () => hacer(() => guardarLista(estado.lista.filter((x) => x !== d)), [], "Quitado de la lista")}, "Quitar")))));
   }
   else cartas = d[estado.tab].map(cartaSimple);
-  $("lista").replaceChildren(...(cartas.length ? cartas : [el("div", {class: "vacio"}, el("b", {}, "Nada pendiente aquí"), "La bandeja de entrada solo guarda lo que queda por resolver.")]));
+  if (estado.tab === "nuevo" && cartas.length) cartas.unshift(el("p", {class: "pide"}, "Recién llegados. El agente todavía no los ha clasificado; puedes abrirlos, contestarlos o archivarlos ya."));
+  $("lista").replaceChildren(...(cartas.length ? cartas : [el("div", {class: "vacio"}, el("b", {}, "Nada pendiente aquí"), estado.tab === "nuevo" ? "No hay correos nuevos sin clasificar." : "La bandeja de entrada solo guarda lo que queda por resolver.")]));
   pintarDetalle();
 
   // El envío en bloque deja fuera lo marcado para revisar y lo que tiene huecos: eso se envía de uno en uno.
@@ -1025,7 +1035,7 @@ function salir() {
   borrar("agente.trabajo");
   Object.assign(estado, {propuestas: {}, resumenes: {}, editados: {}, redacta: null});
   guardar("agente.salio", true);
-  estado.datos = {resp: [], news: [], arch: [], pend: []};
+  estado.datos = {nuevo: [], resp: [], news: [], arch: [], pend: []};
   cerrar();
   pantallaInicio(false);
 }
