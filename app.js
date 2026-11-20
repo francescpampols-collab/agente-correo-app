@@ -267,7 +267,7 @@ function abrir(mid) {
 async function cargarCorreo(mid) {
   try {
     const j = await api("GET", `/me/messages/${id(mid)}?$select=subject,body,toRecipients,ccRecipients,hasAttachments,receivedDateTime`);
-    const c = {texto: (((j || {}).body || {}).content || "").replace(/^\s*Precaución:[\s\S]*?archivos adjuntos\.\s*/i, "").replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim(), para: [], adjuntos: [], fecha: (j || {}).receivedDateTime || ""};
+    const c = {texto: (((j || {}).body || {}).content || "").replace(/^\s*Precaución:[\s\S]*?archivos adjuntos\.\s*/i, "").replace(/\r/g, "").replace(/\[cid:[^\]]*\]\s*/g, "").replace(/\n{3,}/g, "\n\n").trim(), para: [], adjuntos: [], fecha: (j || {}).receivedDateTime || ""};
     for (const r of ((j || {}).toRecipients || []).concat((j || {}).ccRecipients || [])) if (r.emailAddress && r.emailAddress.address) c.para.push(r.emailAddress.address);
     if ((j || {}).hasAttachments) {
       const a = await api("GET", `/me/messages/${id(mid)}/attachments?$select=id,name,size,contentType`);
@@ -339,12 +339,14 @@ function cartaSimple(m) {
       estado.tab === "arch" ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
       el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
 }
+// Como append, pero sin los huecos: append(null) escribiría la palabra «null».
+function poner(nodo, ...hijos) { for (const h of hijos) if (h != null) nodo.append(h); }
 function pintarDetalle() {
   const d = $("detalle");
   d.replaceChildren();
   const m = todos().find((x) => x.id === estado.sel);
   if (!m) {
-    d.append(el("div", {class: "vacio"}, el("b", {}, "Elige un correo"), "Pulsa cualquier correo de la lista para leerlo aquí."));
+    poner(d, el("div", {class: "vacio"}, el("b", {}, "Elige un correo"), "Pulsa cualquier correo de la lista para leerlo aquí."));
     return;
   }
   const p = prop(m);
@@ -352,7 +354,7 @@ function pintarDetalle() {
   const outlook = m.webLink ? enlaceSeguro(m.webLink) : null;
   const esRespuesta = estado.datos.resp.includes(m);
   const esArchivar = estado.datos.arch.includes(m) || estado.datos.news.includes(m);
-  d.append(
+  poner(d,
     el("button", {class: "plano izquierda", id: "volver", type: "button", onclick: () => { cerrar(); pintar(); }}, "‹ Bandeja"),
     el("div", {}, el("div", {class: "de"}, de(m)), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
       c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null),
@@ -372,7 +374,7 @@ function pintarDetalle() {
     const comprobar = () => { botonEnviar.disabled = faltaDato(m, area.value) || !area.value.trim(); };
     area.addEventListener("input", comprobar);
     comprobar();
-    d.append(
+    poner(d,
       el("span", {class: "eti"}, "Tu respuesta" + (p.todos ? " (a todos)" : "")),
       destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
       area,
@@ -381,7 +383,7 @@ function pintarDetalle() {
         el("button", {class: "plano", type: "button", onclick: () => hacer(() => descartar(m), [m.id], "Borrador descartado; el correo queda en Tuyos")}, "Descartar"),
         botonEnviar));
   } else {
-    d.append(el("div", {class: "fila"},
+    poner(d, el("div", {class: "fila"},
       esArchivar ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
       el("button", {class: "lleno", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
   }
