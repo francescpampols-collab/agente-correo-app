@@ -118,7 +118,27 @@ async function listar(cat) {
     "$top": "100",
   });
   const j = await api("GET", "/me/mailFolders/inbox/messages?" + q);
-  return (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
+  const lista = (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
+  await completar(lista);
+  return lista;
+}
+// En los listados Outlook corta la propiedad a 255 caracteres. Las que llegan
+// cortadas se vuelven a pedir enteras, de veinte en veinte.
+async function completar(lista) {
+  const cortadas = lista.filter((m) => {
+    const v = ((m.singleValueExtendedProperties || [])[0] || {}).value || "";
+    if (!v) return false;
+    try { JSON.parse(v); return false; } catch (e) { return true; }
+  });
+  const exp = encodeURIComponent(`singleValueExtendedProperties($filter=id eq '${PROP}')`);
+  for (let i = 0; i < cortadas.length; i += 20) {
+    const grupo = cortadas.slice(i, i + 20);
+    const r = await api("POST", "/$batch", {requests: grupo.map((m, k) => ({id: String(k), method: "GET", url: `/me/messages/${id(m.id)}?$select=id&$expand=${exp}`, headers: {Prefer: 'IdType="ImmutableId"'}}))});
+    for (const x of (r && r.responses) || []) {
+      const m = grupo[Number(x.id)];
+      if (m && x.status === 200 && x.body && x.body.singleValueExtendedProperties) m.singleValueExtendedProperties = x.body.singleValueExtendedProperties;
+    }
+  }
 }
 // Remitentes de «archivar siempre»: se guardan en la propia Bandeja de entrada de Outlook.
 async function leerLista() {
