@@ -167,6 +167,8 @@ button.enlace.izquierda{align-self:flex-start;background:none;border:0;padding:0
 .pregunta b{color:var(--marino)}
 .opciones{display:flex;flex-wrap:wrap;gap:6px}
 .opcion{min-height:44px;padding:6px 14px;border:1px solid var(--linea);border-radius:8px;background:var(--papel);color:var(--tinta);font-size:15px;font-weight:500;text-align:left;cursor:pointer}
+.opcion.otra{border-style:dashed}
+.libre{width:100%;min-height:64px;padding:10px 12px;border:1px solid var(--azul);border-radius:8px;background:#fff;color:var(--tinta);font:inherit;font-size:16px;resize:vertical}
 .opcion.activa{background:var(--marino);border-color:var(--marino);color:#fff}
 a.accion{text-decoration:none}
 

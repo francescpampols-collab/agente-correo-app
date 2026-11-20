@@ -455,7 +455,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=40"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=41"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -982,13 +982,13 @@ async function pedirTest(m, anterior, destino) {
   if (destino) x.destino = {modo: destino.modo, para: destino.para.slice(), cc: destino.cc.slice(), cco: (destino.cco || []).slice()};
   repintarSi(m.id);
   try {
-    const sistema = `Francesc Pampols, administrador de Grup PAMPOLS, tiene que contestar un correo y la respuesta propuesta no le convence. Prepara un test con las preguntas que hagan falta para definir la respuesta, ni una más: una por cada decisión real que plantea este correo (aceptar o no, plazos, quién se encarga, qué pedir a cambio, a quién contestar). Si el correo es sencillo bastan 1 o 2; si tiene varios asuntos abiertos, una por asunto, con un máximo de 7. No preguntes por el tono ni nada genérico, ni lo que ya se deduce del correo. Cada pregunta con entre 2 y 4 opciones cortas (máximo 9 palabras), distintas entre sí y realistas para este caso. En castellano. ${AVISO_IA}\nDevuelve solo JSON válido con esta forma: {"preguntas":[{"pregunta":"…","opciones":["…","…"]}]}`;
-    const res = await ia(sistema, (x.texto ? `Respuesta propuesta que no le convence:\n${x.texto}\n\n` : "") + correoParaIA(m), 2000);
+    const sistema = `Francesc Pampols, administrador de Grup PAMPOLS, tiene que contestar un correo y la respuesta propuesta no le convence. Prepara un test con las preguntas que hagan falta para definir la respuesta, ni una más: una por cada decisión real que plantea este correo (aceptar o no, plazos, quién se encarga, qué pedir a cambio, a quién contestar). Si el correo es sencillo bastan 1 o 2. Si es complejo (varios asuntos, un hilo largo, adjuntos, cifras o decisiones encadenadas) pregunta más: una por cada asunto abierto y, dentro de un asunto, por cada decisión que cambie la respuesta (importe, fecha, responsable, condición), hasta un máximo de 14. Antes de escribir el test repasa el correo punto por punto para no dejarte ninguno. No preguntes por el tono ni nada genérico, ni lo que ya se deduce del correo. Cada pregunta con entre 2 y 4 opciones cortas (máximo 9 palabras), distintas entre sí y realistas para este caso; no añadas una opción «Otra», la app ya la pone. En castellano. ${AVISO_IA}\nDevuelve solo JSON válido con esta forma: {"preguntas":[{"pregunta":"…","opciones":["…","…"]}]}`;
+    const res = await ia(sistema, (x.texto ? `Respuesta propuesta que no le convence:\n${x.texto}\n\n` : "") + correoParaIA(m), 4000);
     const j = JSON.parse(res.texto.slice(res.texto.indexOf("{"), res.texto.lastIndexOf("}") + 1));
-    const preguntas = (j.preguntas || []).filter((q) => q && typeof q.pregunta === "string" && Array.isArray(q.opciones)).slice(0, 7)
+    const preguntas = (j.preguntas || []).filter((q) => q && typeof q.pregunta === "string" && Array.isArray(q.opciones)).slice(0, 14)
       .map((q) => ({pregunta: q.pregunta.slice(0, 200), opciones: q.opciones.filter((o) => typeof o === "string" && o.trim()).slice(0, 4).map((o) => o.slice(0, 90))})).filter((q) => q.opciones.length >= 2);
     if (!preguntas.length) throw new Error("la IA no ha devuelto preguntas");
-    Object.assign(x, {fase: "test", preguntas, elegidas: {}, extra: ""});
+    Object.assign(x, {fase: "test", preguntas, elegidas: {}, libres: {}, extra: ""});
   } catch (e) { x.fase = x.texto ? "lista" : "error"; x.error = e.message; avisar("No se ha podido preparar el test: " + e.message); }
   repintarSi(m.id);
 }
@@ -1008,16 +1008,28 @@ function bloquePropuesta(m, esRespuesta) {
   if (x.fase === "cargando") return el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "La IA está preparando la respuesta…"));
   if (x.fase === "error") return el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "No se ha podido preparar: " + x.error), el("button", {class: "plano izquierda", type: "button", onclick: () => pedirPropuesta(m)}, "Reintentar"));
   if (x.fase === "test") {
-    const elegir = (k, o) => { x.elegidas[k] = x.elegidas[k] === o ? undefined : o; pintarDetalle(); const t = document.querySelector(".test"); if (t) t.scrollIntoView({block: "nearest"}); };
+    if (!x.libres) x.libres = {};
+    const OTRA = "\u0000otra";
+    const elegir = (k, o) => { x.elegidas[k] = x.elegidas[k] === o ? undefined : o; pintarDetalle(); const t = o === OTRA && x.elegidas[k] ? document.getElementById("libre" + k) : null; if (t) t.focus(); };
     const extra = el("input", {type: "text", id: "extra", autocomplete: "off", placeholder: "Opcional"});
     extra.value = x.extra || "";
     extra.addEventListener("input", () => { x.extra = extra.value; });
-    const guia = () => x.preguntas.map((q, k) => x.elegidas[k] ? `- ${q.pregunta} → ${x.elegidas[k]}` : null).filter(Boolean).concat(x.extra && x.extra.trim() ? ["- Además: " + x.extra.trim()] : []).join("\n");
+    const libre = (k) => {
+      const t = el("textarea", {id: "libre" + k, class: "libre", rows: "2", placeholder: "Escribe tu respuesta", "aria-label": "Tu respuesta a la pregunta " + (k + 1)});
+      t.value = x.libres[k] || "";
+      t.addEventListener("input", () => { x.libres[k] = t.value; guardarTrabajo(); });
+      return t;
+    };
+    const dicho = (k) => x.elegidas[k] === OTRA ? (x.libres[k] || "").trim() : x.elegidas[k];
+    const guia = () => x.preguntas.map((q, k) => dicho(k) ? `- ${q.pregunta} → ${dicho(k)}` : null).filter(Boolean).concat(x.extra && x.extra.trim() ? ["- Además: " + x.extra.trim()] : []).join("\n");
     return el("div", {class: "carta propuesta test"},
       el("span", {class: "eti"}, "Define la respuesta"),
       ...x.preguntas.map((q, k) => el("div", {class: "pregunta"},
         el("p", {class: "pide normal"}, el("b", {}, (k + 1) + ". "), q.pregunta),
-        el("div", {class: "opciones"}, ...q.opciones.map((o) => el("button", {class: "opcion" + (x.elegidas[k] === o ? " activa" : ""), type: "button", "aria-pressed": x.elegidas[k] === o ? "true" : "false", onclick: () => elegir(k, o)}, o))))),
+        el("div", {class: "opciones"},
+          ...q.opciones.map((o) => el("button", {class: "opcion" + (x.elegidas[k] === o ? " activa" : ""), type: "button", "aria-pressed": x.elegidas[k] === o ? "true" : "false", onclick: () => elegir(k, o)}, o)),
+          el("button", {class: "opcion otra" + (x.elegidas[k] === OTRA ? " activa" : ""), type: "button", "aria-pressed": x.elegidas[k] === OTRA ? "true" : "false", onclick: () => elegir(k, OTRA)}, "Otra…")),
+        x.elegidas[k] === OTRA ? libre(k) : null)),
       el("label", {}, "Algo más que deba decir", extra),
       el("div", {class: "fila"},
         el("button", {class: "plano", type: "button", onclick: () => { x.fase = x.texto ? "lista" : "error"; pintarDetalle(); }}, "Volver"),
