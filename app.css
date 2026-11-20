@@ -145,3 +145,4 @@ button.enlace.izquierda{align-self:flex-start;background:none;border:0;padding:0
 .accion.activa{background:#E3ECF6;border-color:var(--azul)}
 .icono{width:24px;height:26px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
 @media (min-width:600px){.accion{flex-direction:row;gap:8px;font-size:15px;min-height:46px}}
+#lista>*,#detalle>*{flex-shrink:0}

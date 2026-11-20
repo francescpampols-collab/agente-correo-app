@@ -38,7 +38,12 @@
       if (t.length > 900) continue;
       const interior = Array.from(n.querySelectorAll("div, p, td")).some((h) => (reCita.test(h.textContent || "") || reAviso.test(h.textContent || "")));
       if (interior) continue;
-      if (reAviso.test(t)) n.remove();
+      if (reAviso.test(t)) {
+        // El aviso suele venir en una tabla amarilla: se quita la tabla entera, no solo el texto.
+        let quitar = n;
+        for (let p = n.parentElement; p && p !== document.body; p = p.parentElement) if (reAviso.test(p.textContent || "")) quitar = p; else break;
+        quitar.remove();
+      }
       else if (reCita.test(t)) n.setAttribute("style", "border:0;border-top:1px solid #CBD3DC;border-left:5px solid #C2935A;background:#E9EDF1;color:#55606E;padding:9px 12px;margin:22px 0 12px;font-size:14px;line-height:1.4");
     }
     document.body.querySelectorAll("hr").forEach((h) => h.remove());

@@ -316,7 +316,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html) {
-  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=13"});
+  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=14"});
   marco.html = html;
   return marco;
 }
