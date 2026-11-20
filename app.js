@@ -158,7 +158,7 @@ const id = (x) => encodeURIComponent(x);
 
 // ---------- datos ----------
 async function listarTodo() {
-  const etiquetas = [CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual];
+  const etiquetas = [CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual, CAT.baja];
   const q = new URLSearchParams({
     "$filter": etiquetas.map((e) => `categories/any(c:c eq '${e}')`).join(" or "),
     "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments",
@@ -183,7 +183,7 @@ async function listarTodo() {
     nuevo.forEach((m) => { m.sinClasificar = true; });
   } catch (e) {}
   const de = (e) => lista.filter((m) => (m.categories || []).includes(e));
-  return {nuevo, resp: de(CAT.resp), news: de(CAT.news), arch: de(CAT.arch), pend: de(CAT.pend).concat(de(CAT.manual))};
+  return {nuevo, resp: de(CAT.resp), news: de(CAT.news).concat(de(CAT.baja)), arch: de(CAT.arch), pend: de(CAT.pend).concat(de(CAT.manual))};
 }
 // En los listados Outlook corta la propiedad a 255 caracteres. Las que llegan
 // cortadas se vuelven a pedir enteras, de cuatro en cuatro (el tope de Outlook).
@@ -450,7 +450,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=33"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=34"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -526,6 +526,7 @@ function cartaGrupo(g) {
   return el("div", {class: "carta" + (g.items.some((m) => m.id === estado.sel) ? " sel" : ""), onclick: alPulsarCarta(g.items[0].id)},
     el("span", {class: "asunto"}, g.nombre),
     g.dir && g.dir !== g.nombre ? el("span", {class: "de"}, g.dir) : null,
+    g.items.some((m) => (m.categories || []).includes(CAT.baja)) ? el("div", {class: "marcas"}, el("span", {class: "marca cola"}, "Baja en trámite: se archiva sola cuando el agente la gestione")) : null,
     ...g.items.slice(0, 5).map((m) => el("button", {class: "pide enlace", type: "button", onclick: () => abrir(m.id)}, m.subject || "(sin asunto)")),
     g.items.length > 5 ? el("span", {class: "pide"}, "y " + (g.items.length - 5) + " más") : null,
     el("div", {class: "fila"},
@@ -633,6 +634,7 @@ function marcas(m) {
   if (pend) lista.push(["cola", pend[0] + " en cola"]);
   const puesta = cats.find((x) => x.startsWith(CAT_PUESTA));
   if (puesta) { const r = REACCIONES.find((y) => y[1] === puesta.slice(CAT_PUESTA.length)); lista.push(["hecho", (r ? r[0] + " " : "") + "Reacción puesta"]); }
+  if (cats.includes(CAT.baja)) lista.push(["cola", "Baja en trámite"]);
   if (enProceso.has(m.id)) lista.push(["cola", "Enviando…"]);
   return lista.length ? el("div", {class: "marcas"}, ...lista.map(([tipo, texto]) => el("span", {class: "marca " + tipo}, texto))) : null;
 }
