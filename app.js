@@ -19,13 +19,40 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
+const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 function leer(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
 function borrar(k) { try { localStorage.removeItem(k); } catch (e) {} }
 // Todo el contenido de los correos entra en la página como texto, nunca como HTML.
+// Lo que está a medias (propuestas, test, borradores, resúmenes y el correo abierto) se guarda en el
+// dispositivo para que recargar la página no lo borre. «Salir» lo elimina.
+let relojTrabajo;
+function guardarTrabajo() {
+  clearTimeout(relojTrabajo);
+  relojTrabajo = setTimeout(() => {
+    const propuestas = {};
+    for (const [k, x] of Object.entries(estado.propuestas)) if (x && x.fase !== "cargando") propuestas[k] = x; else if (x && x.texto) propuestas[k] = Object.assign({}, x, {fase: "lista"});
+    guardar("agente.trabajo", {propuestas, resumenes: estado.resumenes, editados: estado.editados, redacta: estado.redacta, sel: estado.sel, tab: estado.tab, soloTexto: !!estado.soloTexto});
+  }, 250);
+}
+function recuperarTrabajo() {
+  const t = leer("agente.trabajo");
+  if (!t || typeof t !== "object") return null;
+  for (const k of ["propuestas", "resumenes", "editados"]) if (t[k] && typeof t[k] === "object") estado[k] = t[k];
+  if (t.redacta && typeof t.redacta === "object" && Array.isArray(t.redacta.para) && Array.isArray(t.redacta.cc) && MODOS[t.redacta.modo]) estado.redacta = t.redacta;
+  if (PESTANAS.some(([k]) => k === t.tab)) estado.tab = t.tab;
+  estado.soloTexto = !!t.soloTexto;
+  return typeof t.sel === "string" ? t.sel : null;
+}
+// Tras leer el buzón, se tira lo guardado de correos que ya no están.
+function podarTrabajo() {
+  const vivos = new Set(todos().map((m) => m.id));
+  for (const k of ["propuestas", "resumenes", "editados"]) for (const mid of Object.keys(estado[k])) if (!vivos.has(mid)) delete estado[k][mid];
+  if (estado.redacta && !vivos.has(estado.redacta.mid)) estado.redacta = null;
+}
+document.addEventListener("input", guardarTrabajo);
 function el(tag, attrs, ...hijos) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -193,6 +220,7 @@ async function cargar() {
     estado.datos = await listarTodo();
     estado.lista = await leerLista();
     if (estado.sel && !todos().some((m) => m.id === estado.sel)) cerrar();
+    podarTrabajo();
   } catch (e) { avisar("No se ha podido leer el buzón: " + e.message); }
   $("recargar").disabled = false;
   pintar();
@@ -265,7 +293,7 @@ async function hacer(tarea, ids, hecho, recargar) {
 
 // ---------- pantalla ----------
 function abrir(mid) {
-  if (estado.sel !== mid) { estado.redacta = null; estado.soloTexto = false; }
+  if (estado.sel !== mid) { if (!(estado.redacta && estado.redacta.mid === mid)) estado.redacta = null; estado.soloTexto = false; estado.reaccionando = false; }
   estado.sel = mid;
   document.body.classList.add("viendo");
   pintar();
@@ -355,7 +383,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html) {
-  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=19"});
+  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=20"});
   marco.html = html;
   return marco;
 }
@@ -392,7 +420,7 @@ function fechaLarga(iso) {
   const f = new Date(iso);
   return isNaN(f) ? "" : f.toLocaleString("es-ES", {weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit"});
 }
-function cerrar() { estado.sel = null; document.body.classList.remove("viendo"); }
+function cerrar() { estado.sel = null; document.body.classList.remove("viendo"); guardarTrabajo(); }
 function faltaDato(m, texto) { return /\[FALTA/i.test(texto != null ? texto : prop(m).respuesta || ""); }
 function destinatarios(p) { return Array.isArray(p.para) && p.para.length ? "Se envía a: " + p.para.slice(0, 6).join(", ") : null; }
 
@@ -510,6 +538,30 @@ function icono(nombre) {
   t.setAttribute("d", TRAZOS[nombre]);
   svg.append(t);
   return svg;
+}
+// Las reacciones solo las puede poner Outlook. Aquí se dejan apuntadas en el correo (una categoría)
+// y una tarea las pone desde el Outlook web del PC de Francesc cuando está encendido.
+const REACCIONES = [["👍", "Me gusta"], ["❤️", "Me encanta"], ["🎉", "Celebrar"], ["😄", "Risa"], ["😮", "Sorpresa"], ["😢", "Triste"]];
+const CAT_REACCION = "Reacción pendiente: ";
+function reaccionPendiente(m) {
+  const c = (m.categories || []).find((x) => x.startsWith(CAT_REACCION));
+  return c ? REACCIONES.find((r) => r[1] === c.slice(CAT_REACCION.length)) || null : null;
+}
+async function pedirReaccion(m, nombre) {
+  const cats = (m.categories || []).filter((x) => !x.startsWith(CAT_REACCION));
+  if (nombre) cats.push(CAT_REACCION + nombre);
+  await api("PATCH", `/me/messages/${id(m.id)}`, {categories: cats});
+  m.categories = cats;
+  estado.reaccionando = false;
+}
+function barraReacciones(m) {
+  const pend = reaccionPendiente(m);
+  if (!estado.reaccionando && !pend) return null;
+  return el("div", {class: "reacciones"},
+    pend ? el("span", {class: "de"}, pend[0] + " en cola: se pondrá desde el Outlook de tu PC.") : el("span", {class: "de"}, "Elige la reacción. La pone el Outlook de tu PC, sin enviar ningún correo."),
+    el("div", {class: "rapidas"}, ...REACCIONES.map(([icono, nombre]) =>
+      el("button", {class: "rapida" + (pend && pend[1] === nombre ? " activa" : ""), type: "button", title: nombre, "aria-label": nombre, "aria-pressed": pend && pend[1] === nombre ? "true" : "false",
+        onclick: () => hacer(() => pedirReaccion(m, pend && pend[1] === nombre ? null : nombre), [], pend && pend[1] === nombre ? "Reacción quitada de la cola" : icono + " en cola")}, icono))));
 }
 const MODOS = {responder: ["createReply", "Responder"], todos: ["createReplyAll", "Responder a todos"], reenviar: ["createForward", "Reenviar"]};
 const CORREO = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
@@ -724,7 +776,7 @@ function barraOutlook(m) {
       if (campo && estado.redacta) campo.focus();
     }}, icono(modo), MODOS[modo][1])),
     // Las reacciones (pulgar, corazón…) solo las puede poner Outlook: este botón abre ahí el mismo correo.
-    m.webLink && enlaceSeguro(m.webLink) ? el("a", {class: "accion", href: enlaceSeguro(m.webLink).href, target: "_blank", rel: "noopener noreferrer"}, icono("reaccion"), "Reaccionar") : null);
+    el("button", {class: "accion" + (estado.reaccionando ? " activa" : ""), type: "button", "aria-pressed": estado.reaccionando ? "true" : "false", onclick: () => { estado.reaccionando = !estado.reaccionando; pintarDetalle(); }}, icono("reaccion"), "Reaccionar"));
 }
 function panelManual(m) {
   const r = estado.redacta && estado.redacta.mid === m.id ? estado.redacta : null;
@@ -754,6 +806,7 @@ function panelManual(m) {
 // Como append, pero sin los huecos: append(null) escribiría la palabra «null».
 function poner(nodo, ...hijos) { for (const h of hijos) if (h != null) nodo.append(h); }
 function pintarDetalle() {
+  guardarTrabajo();
   const d = $("detalle");
   d.replaceChildren();
   const m = todos().find((x) => x.id === estado.sel);
@@ -771,7 +824,8 @@ function pintarDetalle() {
     el("div", {class: "carta cabecera"}, remitente(m, "div"), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
       c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null,
       c && c.fecha ? el("div", {class: "de"}, fechaLarga(c.fecha)) : null,
-      barraOutlook(m)),
+      barraOutlook(m),
+      barraReacciones(m)),
     panelManual(m),
     bloquePropuesta(m, esRespuesta),
     bloqueResumen(m, p, c),
@@ -787,7 +841,8 @@ function pintarDetalle() {
       outlook ? el("a", {href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null));
   if (esRespuesta) {
     const area = el("textarea", {id: "borrador", "aria-label": "Tu respuesta"});
-    area.value = p.respuesta || "";
+    area.value = estado.editados[m.id] != null ? estado.editados[m.id] : p.respuesta || "";
+    area.addEventListener("input", () => { estado.editados[m.id] = area.value; });
     const botonEnviar = el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviar(m, area.value), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar en " + carpetaDe(m).nombre);
     const comprobar = () => { botonEnviar.disabled = faltaDato(m, area.value) || !area.value.trim(); };
     area.addEventListener("input", comprobar);
@@ -876,6 +931,9 @@ function pantallaInicio(pedirConfig) {
 function salir() {
   borrar("agente.tok");
   borrar("agente.ia");
+  clearTimeout(relojTrabajo);
+  borrar("agente.trabajo");
+  Object.assign(estado, {propuestas: {}, resumenes: {}, editados: {}, redacta: null});
   guardar("agente.salio", true);
   estado.datos = {resp: [], news: [], arch: [], pend: []};
   cerrar();
@@ -898,8 +956,10 @@ async function arrancar() {
   $("app").classList.remove("oculto");
   $("recargar").onclick = cargar;
   $("salir").onclick = salir;
+  const abierto = recuperarTrabajo();
   pintar();
   await cargar();
+  if (abierto && todos().some((m) => m.id === abierto)) abrir(abierto);
   setInterval(() => { if (!document.hidden && !estado.sel && !leer("agente.salio")) cargar(); }, 120000);
 }
 arrancar();
