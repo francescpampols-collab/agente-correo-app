@@ -455,7 +455,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=37"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=38"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -940,10 +940,10 @@ async function pedirTest(m, anterior, destino) {
   if (destino) x.destino = {modo: destino.modo, para: destino.para.slice(), cc: destino.cc.slice(), cco: (destino.cco || []).slice()};
   repintarSi(m.id);
   try {
-    const sistema = `Francesc Pampols, administrador de Grup PAMPOLS, tiene que contestar un correo y la respuesta propuesta no le convence. Prepara un test de exactamente 5 preguntas que, contestadas, definan la respuesta: las decisiones concretas que plantea este correo (aceptar o no, plazos, quién se encarga, qué pedir a cambio, a quién contestar, tono). Nada genérico. Cada pregunta con entre 2 y 4 opciones cortas (máximo 9 palabras), distintas entre sí y realistas para este caso. En castellano. ${AVISO_IA}\nDevuelve solo JSON válido con esta forma: {"preguntas":[{"pregunta":"…","opciones":["…","…"]}]}`;
+    const sistema = `Francesc Pampols, administrador de Grup PAMPOLS, tiene que contestar un correo y la respuesta propuesta no le convence. Prepara un test con las preguntas que hagan falta para definir la respuesta, ni una más: una por cada decisión real que plantea este correo (aceptar o no, plazos, quién se encarga, qué pedir a cambio, a quién contestar). Si el correo es sencillo bastan 1 o 2; si tiene varios asuntos abiertos, una por asunto, con un máximo de 7. No preguntes por el tono ni nada genérico, ni lo que ya se deduce del correo. Cada pregunta con entre 2 y 4 opciones cortas (máximo 9 palabras), distintas entre sí y realistas para este caso. En castellano. ${AVISO_IA}\nDevuelve solo JSON válido con esta forma: {"preguntas":[{"pregunta":"…","opciones":["…","…"]}]}`;
     const res = await ia(sistema, (x.texto ? `Respuesta propuesta que no le convence:\n${x.texto}\n\n` : "") + correoParaIA(m), 2000);
     const j = JSON.parse(res.texto.slice(res.texto.indexOf("{"), res.texto.lastIndexOf("}") + 1));
-    const preguntas = (j.preguntas || []).filter((q) => q && typeof q.pregunta === "string" && Array.isArray(q.opciones)).slice(0, 5)
+    const preguntas = (j.preguntas || []).filter((q) => q && typeof q.pregunta === "string" && Array.isArray(q.opciones)).slice(0, 7)
       .map((q) => ({pregunta: q.pregunta.slice(0, 200), opciones: q.opciones.filter((o) => typeof o === "string" && o.trim()).slice(0, 4).map((o) => o.slice(0, 90))})).filter((q) => q.opciones.length >= 2);
     if (!preguntas.length) throw new Error("la IA no ha devuelto preguntas");
     Object.assign(x, {fase: "test", preguntas, elegidas: {}, extra: ""});
@@ -1185,7 +1185,7 @@ function panelManual(m) {
     hayIA ? el("div", {class: "ia"},
       el("label", {}, "Dile a la IA qué quieres contestar", idea),
       el("button", {class: "lleno corto", type: "button", onclick: redactar}, r.texto.trim() ? "Mejorar con IA" : "Redactar con IA"),
-      r.modo !== "reenviar" ? el("button", {class: "plano corto", type: "button", onclick: () => { estado.redacta = null; pedirTest(m, r.texto, r); }}, "Afinar con 5 preguntas") : null) : activarIA(),
+      r.modo !== "reenviar" ? el("button", {class: "plano corto", type: "button", onclick: () => { estado.redacta = null; pedirTest(m, r.texto, r); }}, "Afinar con preguntas") : null) : activarIA(),
     area,
     /\[FALTA/i.test(r.texto) ? el("span", {class: "aviso"}, "Completa los huecos [FALTA: …] para poder enviar") : null,
     el("div", {class: "fila"},
