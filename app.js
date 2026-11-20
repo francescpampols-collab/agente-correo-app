@@ -455,7 +455,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=39"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=40"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -538,6 +538,7 @@ function bloqueResumen(m, p, c) {
       }))
       : lineasResumen(p.resumen).length ? el("ul", {class: "resumen-lista"}, ...lineasResumen(p.resumen).map((l) => el("li", {}, l)))
       : p.pide ? el("p", {class: "pide normal"}, p.pide) : el("p", {class: "pide"}, "Sin resumen todavía."),
+    !largo ? listaFlojas(m) : null,
     !largo && c && !c.error && leer("agente.ia") ? el("button", {class: "enlace izquierda", type: "button", onclick: pedir}, "Resumir a fondo con IA") : null,
     estado.pideClave && !leer("agente.ia") && !(estado.redacta && estado.redacta.mid === m.id) ? activarIA() : null);
 }
@@ -684,10 +685,33 @@ function filaAdjuntos(m) {
 function lineasResumen(texto) {
   return String(texto || "").split(/\n+/).map((l) => l.replace(/^\s*[-•]\s*/, "").trim()).filter(Boolean);
 }
+// Afirmaciones de un report comercial que no llevan importe ni fecha: lo que hay que pedir que concreten.
+function flojas(m) {
+  const l = prop(m).sin_concretar;
+  return Array.isArray(l) ? l.filter((x) => x && x.cliente) : [];
+}
+function pedirConcrecion(m) {
+  const guia = "Esto no es una respuesta de cortesía. Francesc quiere que le concreten por escrito lo que el report da por hecho sin datos. Escribe corto y directo, sin reproches y sin dar las gracias por el informe. Pide, para cada punto, importe o volumen estimado, producto, fecha prevista de pedido y siguiente paso con fecha, y que conteste antes del próximo report. Enumera los puntos tal cual, uno por línea:\n"
+    + flojas(m).map((x) => `- ${x.cliente}${x.quien ? " (" + x.quien + ")" : ""}: dice «${x.dicho}». Falta: ${x.falta}`).join("\n");
+  abrir(m.id);
+  if (!leer("agente.ia")) { avisar("Activa la IA en este dispositivo para redactar el recordatorio"); return; }
+  pedirPropuesta(m, guia);
+}
+function listaFlojas(m) {
+  const l = flojas(m);
+  if (!l.length) return null;
+  return el("div", {class: "flojas"},
+    el("span", {class: "eti"}, `Sin concretar (${l.length})`),
+    el("ul", {}, ...l.map((x) => el("li", {}, el("b", {}, x.cliente + (x.quien ? ", " + x.quien : "") + ": "), x.dicho, el("span", {class: "falta"}, " Falta: " + x.falta)))),
+    el("button", {class: "plano izquierda", type: "button", onclick: () => pedirConcrecion(m)}, "Pedir que lo concreten"));
+}
 function resumenDesplegable(m) {
-  const lineas = lineasResumen(prop(m).resumen);
-  if (!lineas.length) return null;
-  const d = el("details", {class: "resumen-ext"}, el("summary", {}, "Resumen"), el("ul", {}, ...lineas.map((l) => el("li", {}, l))));
+  const lineas = lineasResumen(prop(m).resumen), n = flojas(m).length;
+  if (!lineas.length && !n) return null;
+  const d = el("details", {class: "resumen-ext" + (n ? " con-flojas" : "")},
+    el("summary", {}, "Resumen", n ? el("span", {class: "marca cola"}, n + " sin concretar") : null),
+    lineas.length ? el("ul", {}, ...lineas.map((l) => el("li", {}, l))) : null,
+    listaFlojas(m));
   d.open = !!estado.resumenAbierto[m.id];
   d.addEventListener("toggle", () => { estado.resumenAbierto[m.id] = d.open; });
   return d;

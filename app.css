@@ -228,3 +228,11 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .fila>.reac{flex:0 0 52px;padding:0;display:flex;align-items:center;justify-content:center;color:var(--azul-osc)}
 .reac.activa{background:#E3ECF6;border-color:var(--azul)}
 .reac .icono{width:24px;height:26px}
+/* Lo que un report comercial no concreta */
+.resumen-ext.con-flojas{border-left-color:var(--kraft)}
+.flojas{display:flex;flex-direction:column;gap:6px;margin:0 12px 12px;padding:10px 12px;background:var(--ambar-fondo);border-radius:8px}
+.nota .flojas{margin:6px 0 0}
+.flojas .eti{color:var(--ambar)}
+.flojas ul{margin:0;padding:0 0 0 18px;display:flex;flex-direction:column;gap:6px;font-size:15px;color:var(--tinta)}
+.flojas b{font-weight:600}
+.flojas .falta{color:var(--ambar);font-weight:500}
