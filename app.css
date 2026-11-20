@@ -209,3 +209,5 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .adjunto .icono{width:18px;height:20px;flex:none;color:var(--azul)}
 .adjunto span{overflow-wrap:anywhere}
 .adjunto .peso{color:var(--gris);font-weight:400;font-size:12px;white-space:nowrap}
+.pedir-ia{display:flex}
+.pedir-ia .plano{border-color:var(--kraft);border-left-width:5px;color:var(--marino)}

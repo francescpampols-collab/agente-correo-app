@@ -349,7 +349,7 @@ function abrir(mid) {
   estado.sel = mid;
   document.body.classList.add("viendo");
   pintar();
-  cargarCorreo(mid).then(() => propuestaAutomatica(mid));
+  cargarCorreo(mid);
 }
 // Trae el correo entero (texto y lista de adjuntos) para leerlo dentro de la app.
 function direcciones(lista) {
@@ -450,7 +450,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=30"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=31"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -784,7 +784,9 @@ function bloquePropuesta(m, esRespuesta) {
   if (estado.datos.news.includes(m) || (esRespuesta && !x)) return null;
   if (estado.redacta && estado.redacta.mid === m.id) return null;
   if (!leer("agente.ia")) return estado.pideClave ? null : el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "Con la IA activada, cada correo se abre con una respuesta ya preparada."), activarIA());
-  if (!x || x.fase === "cargando") return el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "La IA está preparando la respuesta…"));
+  // La IA solo trabaja cuando se le pide: abrir un correo no gasta nada.
+  if (!x) return el("div", {class: "pedir-ia"}, el("button", {class: "plano", type: "button", onclick: () => pedirPropuesta(m)}, "Proponer respuesta con IA"));
+  if (x.fase === "cargando") return el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "La IA está preparando la respuesta…"));
   if (x.fase === "error") return el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "No se ha podido preparar: " + x.error), el("button", {class: "plano izquierda", type: "button", onclick: () => pedirPropuesta(m)}, "Reintentar"));
   if (x.fase === "test") {
     const elegir = (k, o) => { x.elegidas[k] = x.elegidas[k] === o ? undefined : o; pintarDetalle(); const t = document.querySelector(".test"); if (t) t.scrollIntoView({block: "nearest"}); };
@@ -838,7 +840,6 @@ function activarIA() {
         estado.pideClave = false;
         avisar("IA activada en este dispositivo");
         pintarDetalle();
-        propuestaAutomatica(estado.sel);
       }}, "Guardar")));
 }
 
