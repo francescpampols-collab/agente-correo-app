@@ -159,3 +159,8 @@ button.enlace.izquierda{align-self:flex-start;background:none;border:0;padding:0
 .ia .corto{flex:0 0 auto}
 .resumen{display:flex;flex-direction:column;gap:6px}
 .resumen b{color:var(--marino);font-weight:600}
+
+/* Respuestas de un toque */
+.rapidas{display:flex;gap:6px;justify-content:space-between;max-width:420px}
+.rapida{flex:1 1 0;min-height:46px;border:1px solid var(--linea);border-radius:999px;background:var(--papel);font-size:22px;line-height:1;cursor:pointer;font-family:"Segoe UI Emoji","Noto Color Emoji","Apple Color Emoji",sans-serif}
+.rapida:hover{background:#EEF3F8;border-color:var(--azul)}

@@ -351,7 +351,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html) {
-  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=16"});
+  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=17"});
   marco.html = html;
   return marco;
 }
@@ -634,6 +634,18 @@ function barraOutlook(m) {
       if (campo && estado.redacta) campo.focus();
     }}, icono(modo), MODOS[modo][1])));
 }
+// Respuestas de un toque. Outlook no deja a otras aplicaciones poner sus reacciones,
+// así que aquí cada icono prepara una respuesta corta al remitente, lista para enviar.
+const RAPIDAS = [["👍", "De acuerdo"], ["❤️", "Me encanta"], ["🎉", "Enhorabuena"], ["😄", "Me hace gracia"], ["😮", "Me sorprende"], ["😢", "Lo siento"]];
+function barraRapida(m) {
+  return el("div", {class: "rapidas"}, ...RAPIDAS.map(([icono, nombre]) =>
+    el("button", {class: "rapida", type: "button", title: nombre, "aria-label": "Responder con " + nombre, onclick: () => {
+      estado.redacta = Object.assign({mid: m.id, modo: "responder", texto: icono, idea: ""}, destinatariosIniciales(m, "responder"));
+      pintarDetalle();
+      const panel = document.querySelector(".redaccion");
+      if (panel) panel.scrollIntoView({block: "nearest"});
+    }}, icono)));
+}
 function panelManual(m) {
   const r = estado.redacta && estado.redacta.mid === m.id ? estado.redacta : null;
   if (!r) return null;
@@ -679,7 +691,8 @@ function pintarDetalle() {
     el("div", {class: "carta cabecera"}, remitente(m, "div"), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
       c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null,
       c && c.fecha ? el("div", {class: "de"}, fechaLarga(c.fecha)) : null,
-      barraOutlook(m)),
+      barraOutlook(m),
+      barraRapida(m)),
     panelManual(m),
     bloqueResumen(m, p, c),
     p.aviso ? el("span", {class: "aviso"}, (esRespuesta ? "Revisar bien: " : "") + p.aviso) : null,
