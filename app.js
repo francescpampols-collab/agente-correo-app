@@ -19,7 +19,7 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, cargado: false, consulta: "", buscando: false, buscado: false, fuera: null, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
+const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, adjuntos: {}, cargado: false, consulta: "", buscando: false, buscado: false, fuera: null, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -250,7 +250,7 @@ async function cargar() {
   } catch (e) { avisar("No se ha podido leer el buzón: " + e.message); }
   $("recargar").disabled = false;
   pintar();
-  quienSoy().then(precargar).then(cargarContactos);
+  quienSoy().then(listarAdjuntos).then(() => { precargarFicheros(); return precargar(); }).then(cargarContactos);
 }
 function todos() { return [].concat(estado.datos.busca || [], estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
 function quitar(ids) {
@@ -394,7 +394,9 @@ async function traerCorreo(mid) {
   try {
     if (c.pendienteAdjuntos || /cid:/i.test(cuerpoHtml)) {
       const a = await api("GET", `/me/messages/${id(mid)}/attachments?$select=id,name,size,contentType,isInline`);
-      c.adjuntos = ((a || {}).value || []).filter((x) => x.name);
+      const previos = estado.adjuntos[mid] || [];
+      c.adjuntos = ((a || {}).value || []).filter((x) => x.name).map((x) => previos.find((y) => y.id === x.id) || x);
+      estado.adjuntos[mid] = c.adjuntos;
     }
   } catch (e) {}
   c.pendienteAdjuntos = false;
@@ -453,7 +455,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=35"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=36"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -464,15 +466,60 @@ function vistaFirma() {
   if (!estado.firma) return el("span", {class: "de"}, "No hay firma guardada: el correo saldrá sin ella.");
   return el("div", {class: "firma"}, el("span", {class: "eti"}, "Tu firma (se añade al enviar)"), marcoCorreo(estado.firma, "Firma"));
 }
+// Ficheros ya bajados en esta sesión (en memoria): al tocar el adjunto se abre al instante.
+const ficheros = new Map();
+let pesoFicheros = 0;
+async function bajarFichero(mid, adj) {
+  const clave = mid + "|" + adj.id;
+  if (!ficheros.has(clave)) ficheros.set(clave, (async () => {
+    let r;
+    for (let intento = 0; ; intento++) {
+      r = await fetch(`${GRAPH}/me/messages/${id(mid)}/attachments/${id(adj.id)}/$value`, {headers: {Authorization: "Bearer " + await token(), Prefer: 'IdType="ImmutableId"'}});
+      if ((r.status !== 429 && r.status !== 503) || intento >= 3) break;
+      await new Promise((ok) => setTimeout(ok, 2000 * (intento + 1)));
+    }
+    if (!r.ok) throw new Error(`Outlook ha respondido ${r.status}`);
+    const b = await r.blob();
+    pesoFicheros += b.size;
+    adj.listo = true;
+    return b;
+  })().catch((e) => { ficheros.delete(clave); throw e; }));
+  return ficheros.get(clave);
+}
 async function descargar(mid, adj) {
-  const r = await fetch(`${GRAPH}/me/messages/${id(mid)}/attachments/${id(adj.id)}/$value`, {headers: {Authorization: "Bearer " + await token(), Prefer: 'IdType="ImmutableId"'}});
-  if (!r.ok) throw new Error(`Outlook ha respondido ${r.status}`);
-  const url = URL.createObjectURL(await r.blob());
+  const url = URL.createObjectURL(await bajarFichero(mid, adj));
   const a = el("a", {href: url, download: adj.name});
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+// La lista de adjuntos de cada correo se pide aparte y de golpe (ligera), sin esperar a traer el correo entero.
+async function listarAdjuntos() {
+  const faltan = todos().filter((m) => m.hasAttachments && !estado.adjuntos[m.id]);
+  for (let i = 0; i < faltan.length; i += 4) {
+    const grupo = faltan.slice(i, i + 4);
+    try {
+      const r = await api("POST", "/$batch", {requests: grupo.map((m, k) => ({id: String(k), method: "GET", url: `/me/messages/${id(m.id)}/attachments?$select=id,name,size,contentType,isInline`, headers: {Prefer: 'IdType="ImmutableId"'}}))});
+      for (const x of (r && r.responses) || []) {
+        const m = grupo[Number(x.id)];
+        if (m && x.status === 200 && x.body && !estado.adjuntos[m.id]) estado.adjuntos[m.id] = (x.body.value || []).filter((a) => a.name);
+      }
+    } catch (e) {}
+    refrescarLista();
+  }
+}
+// Y los propios ficheros se van bajando de fondo, empezando por la pestaña que estás mirando.
+let tandaFicheros = 0;
+async function precargarFicheros() {
+  const tanda = ++tandaFicheros;
+  const orden = [].concat(estado.datos[estado.tab] || [], todos()).filter((m, k, l) => l.findIndex((y) => y.id === m.id) === k);
+  for (const m of orden) {
+    for (const a of (estado.adjuntos[m.id] || []).filter((x) => !x.isInline && !x.incrustado && !x.listo && x.size <= 8000000)) {
+      if (tanda !== tandaFicheros || pesoFicheros > 80000000) return;
+      try { await bajarFichero(m.id, a); refrescarLista(); if (estado.sel === m.id && !estado.redacta) repintarSi(m.id); } catch (e) {}
+    }
+  }
 }
 function alPulsarCarta(mid) {
   return (e) => { if (!e.target.closest("button, a")) abrir(mid); };
@@ -617,14 +664,15 @@ function panelBusqueda() {
 function tamano(n) { return n > 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round((n || 0) / 1024)) + " KB"; }
 function filaAdjuntos(m) {
   const c = estado.cuerpos[m.id];
-  if (c && !c.error && !c.pendienteAdjuntos) {
-    const lista = (c.adjuntos || []).filter((a) => !a.incrustado && !a.isInline);
+  const sabidos = estado.adjuntos[m.id] || (c && !c.error && !c.pendienteAdjuntos ? c.adjuntos : null);
+  if (sabidos) {
+    const lista = sabidos.filter((a) => !a.incrustado && !a.isInline);
     if (!lista.length) return null;
-    return el("div", {class: "adjuntos"}, ...lista.map((a) => el("button", {class: "adjunto", type: "button", title: "Descargar y abrir", onclick: () => { avisar("Descargando " + a.name + "…"); hacer(() => descargar(m.id, a), [], "Descargado: " + a.name + ". Ábrelo desde el aviso de descargas."); }},
-      icono("clip"), el("span", {}, a.name), el("span", {class: "peso"}, tamano(a.size)))));
+    return el("div", {class: "adjuntos"}, ...lista.map((a) => el("button", {class: "adjunto" + (a.listo ? " listo" : ""), type: "button", title: a.listo ? "Abrir" : "Descargar y abrir", onclick: () => { if (!a.listo) avisar("Descargando " + a.name + "…"); hacer(() => descargar(m.id, a), [], "Descargado: " + a.name + ". Ábrelo desde el aviso de descargas."); }},
+      icono("clip"), el("span", {}, a.name), el("span", {class: "peso"}, tamano(a.size) + (a.listo ? ", listo" : "")))));
   }
   if (!m.hasAttachments) return null;
-  return el("div", {class: "adjuntos"}, el("button", {class: "adjunto", type: "button", onclick: () => { cargarCorreo(m.id).then(pintar); }}, icono("clip"), el("span", {}, c && c.error ? "Reintentar adjuntos" : "Cargando adjuntos…")));
+  return el("div", {class: "adjuntos"}, el("button", {class: "adjunto", type: "button", onclick: () => { listarAdjuntos(); cargarCorreo(m.id).then(pintar); }}, icono("clip"), el("span", {}, "Cargando adjuntos…")));
 }
 // Lo que ya has hecho con un correo, a la vista en la lista y al abrirlo.
 const CAT_HECHO = {responder: "Respondido", todos: "Respondido", reenviar: "Reenviado"};
@@ -1168,7 +1216,7 @@ function pintar() {
   $("resumen").textContent = enProceso.size ? `Guardando ${enProceso.size} ${enProceso.size === 1 ? "cambio" : "cambios"} en Outlook… no cierres ni recargues`
     : !estado.cargado ? "Leyendo tu bandeja…"
     : `${n.resp} ${n.resp === 1 ? "respuesta lista" : "respuestas listas"} y ${d.news.length + n.arch} para archivar`;
-  $("pestanas").replaceChildren(...PESTANAS.map(([k, t]) => el("button", {type: "button", "aria-pressed": String(estado.tab === k), onclick: () => { estado.tab = k; estado.confirma = false; pintar(); }}, t, el("span", {class: "cuenta"}, String(n[k])))));
+  $("pestanas").replaceChildren(...PESTANAS.map(([k, t]) => el("button", {type: "button", "aria-pressed": String(estado.tab === k), onclick: () => { estado.tab = k; estado.confirma = false; pintar(); if (estado.cargado && k !== "busca") { precargarFicheros(); precargar(); } }}, t, el("span", {class: "cuenta"}, String(n[k])))));
   let cartas;
   if (estado.tab === "resp") cartas = d.resp.map(cartaRespuesta);
   else if (estado.tab === "news") {
