@@ -450,7 +450,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=32"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=33"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -546,13 +546,13 @@ async function carpetasFuera() {
   return ids;
 }
 async function buscar() {
-  const t = estado.consulta.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
+  const t = estado.consulta.replace(/["\\():]/g, " ").replace(/\s+/g, " ").trim();
   if (t.length < 2) { avisar("Escribe al menos dos letras del asunto o del remitente"); return; }
   estado.buscando = true;
   pintar();
   try {
     const fuera = await carpetasFuera();
-    const j = await api("GET", "/me/messages?" + new URLSearchParams({"$search": `"subject:\"${t}\" OR from:\"${t}\""`, "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,parentFolderId", "$top": "40"}));
+    const j = await api("GET", "/me/messages?" + new URLSearchParams({"$search": `"subject:${t} OR from:${t}"`, "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,parentFolderId", "$top": "40"}));
     const enBandeja = new Set([].concat(estado.datos.nuevo, estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend).map((m) => m.id));
     const nombres = {};
     for (const [n, i] of Object.entries(estado.carpetas || {})) nombres[i] = n;
