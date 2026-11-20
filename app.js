@@ -19,7 +19,7 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, adjuntos: {}, resumenAbierto: {}, cargado: false, consulta: "", buscando: false, buscado: false, fuera: null, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
+const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, adjuntos: {}, resumenAbierto: {}, reaccionCarta: null, cargado: false, consulta: "", buscando: false, buscado: false, fuera: null, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -455,7 +455,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=38"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=39"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -570,7 +570,9 @@ function cartaRespuesta(m) {
     faltaDato(m) ? el("span", {class: "aviso"}, "Falta un dato") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => abrir(m.id)}, "Ver y editar"),
-      el("button", {class: "lleno", type: "button", disabled: faltaDato(m), onclick: () => hacer(() => enviar(m, null), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar")));
+      el("button", {class: "lleno", type: "button", disabled: faltaDato(m), onclick: () => hacer(() => enviar(m, null), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar"),
+      botonReaccion(m)),
+    reaccionesCarta(m));
 }
 function cartaGrupo(g) {
   const ids = g.items.map((m) => m.id);
@@ -651,7 +653,9 @@ function cartaBusqueda(m) {
     extracto(m) ? el("p", {class: "pide"}, extracto(m).slice(0, 180)) : null,
     el("div", {class: "fila"},
       outlook ? el("a", {class: "plano", href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null,
-      el("button", {class: "lleno", type: "button", onclick: () => reactivar(m)}, "Devolver a la bandeja")));
+      el("button", {class: "lleno", type: "button", onclick: () => reactivar(m)}, "Devolver a la bandeja"),
+      botonReaccion(m)),
+    reaccionesCarta(m));
 }
 function panelBusqueda() {
   const campo = el("input", {type: "text", id: "consulta", autocomplete: "off", enterkeyhint: "search", placeholder: "Asunto o remitente"});
@@ -719,7 +723,9 @@ function cartaSimple(m) {
       baja ? el("a", {class: "plano", href: baja.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir la baja en " + baja.hostname) : null,
       outlook ? el("a", {class: "plano", href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null,
       estado.tab === "arch" ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
-      el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
+      el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
+      botonReaccion(m)),
+    reaccionesCarta(m));
 }
 // Limpia el texto de un correo para leerlo: fuera caracteres invisibles, líneas de relleno y huecos.
 function limpiarTexto(t) {
@@ -808,6 +814,18 @@ async function pedirReaccion(m, nombre) {
   await api("PATCH", `/me/messages/${id(m.id)}`, {categories: cats});
   m.categories = cats;
   estado.reaccionando = false;
+}
+// Lo mismo desde la lista, sin abrir el correo: un botón en cada tarjeta que despliega los seis iconos.
+function botonReaccion(m) {
+  const abierta = estado.reaccionCarta === m.id;
+  return el("button", {class: "plano corto reac" + (abierta ? " activa" : ""), type: "button", title: "Reaccionar", "aria-label": "Reaccionar", "aria-expanded": abierta ? "true" : "false", onclick: () => { estado.reaccionCarta = abierta ? null : m.id; const y = $("lista").scrollTop; pintar(); $("lista").scrollTop = y; }}, icono("reaccion"));
+}
+function reaccionesCarta(m) {
+  if (estado.reaccionCarta !== m.id) return null;
+  const pend = reaccionPendiente(m);
+  return el("div", {class: "rapidas"}, ...REACCIONES.map(([ic, nombre]) =>
+    el("button", {class: "rapida" + (pend && pend[1] === nombre ? " activa" : ""), type: "button", title: nombre, "aria-label": nombre, "aria-pressed": pend && pend[1] === nombre ? "true" : "false",
+      onclick: () => { estado.reaccionCarta = null; hacer(() => pedirReaccion(m, pend && pend[1] === nombre ? null : nombre), [], pend && pend[1] === nombre ? "Reacción quitada de la cola" : ic + " en cola"); }}, ic)));
 }
 function barraReacciones(m) {
   const pend = reaccionPendiente(m);
