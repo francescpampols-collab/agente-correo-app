@@ -149,7 +149,9 @@ async function api(metodo, ruta, cuerpo, tipoCuerpo) {
   let r;
   // Outlook admite pocas peticiones a la vez por buzón: si pide esperar, se espera y se repite.
   for (let intento = 0; ; intento++) {
-    r = await fetch(GRAPH + ruta, {method: metodo, headers: cab, body: cuerpo !== undefined ? JSON.stringify(cuerpo) : undefined});
+    const carga = cuerpo !== undefined ? JSON.stringify(cuerpo) : undefined;
+    // keepalive: los cambios pequeños llegan a Outlook aunque el móvil mande la página al fondo o se cierre.
+    r = await fetch(GRAPH + ruta, {method: metodo, headers: cab, body: carga, keepalive: metodo !== "GET" && (!carga || carga.length < 30000)});
     if ((r.status !== 429 && r.status !== 503) || intento >= 4) break;
     const espera = Math.min(Number(r.headers && r.headers.get && r.headers.get("Retry-After")) || 2 * (intento + 1), 15);
     await new Promise((ok) => setTimeout(ok, espera * 1000));
@@ -252,6 +254,7 @@ async function cargar() {
   } catch (e) { avisar("No se ha podido leer el buzón: " + e.message); }
   $("recargar").disabled = false;
   pintar();
+  if (estado.cargado) reintentarSalida();
   quienSoy().then(listarAdjuntos).then(() => { precargarFicheros(); return precargar(); }).then(cargarContactos).then(clasificarNuevos).catch(() => {});
 }
 function todos() { return [].concat(estado.datos.busca || [], estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
@@ -270,9 +273,29 @@ function grupos() {
 }
 
 // ---------- acciones sobre el buzón ----------
+// Lo que se manda archivar se apunta antes en el dispositivo. Si el móvil duerme la página o se cierra
+// antes de que Outlook lo reciba, se repite solo la próxima vez que se abre la app.
+function apuntarSalida(mid, dentro) {
+  const s = leer("agente.salida"), lista = s && typeof s === "object" ? s : {};
+  if (dentro) lista[mid] = Date.now(); else delete lista[mid];
+  guardar("agente.salida", lista);
+}
 async function archivar(m) {
+  apuntarSalida(m.id, true);
   await api("PATCH", `/me/messages/${id(m.id)}`, {categories: (m.categories || []).filter((c) => !c.startsWith("Agente:"))});
   await api("POST", `/me/messages/${id(m.id)}/move`, {destinationId: carpetaDe(m).id});
+  apuntarSalida(m.id, false);
+}
+function reintentarSalida() {
+  const s = leer("agente.salida");
+  if (!s || typeof s !== "object") return;
+  const pendientes = [];
+  for (const [mid, cuando] of Object.entries(s)) {
+    const m = todos().find((x) => x.id === mid && !x.archivado);
+    if (!m || Date.now() - Number(cuando) > 3 * 864e5) { apuntarSalida(mid, false); continue; }
+    if (!enProceso.has(mid)) pendientes.push(m);
+  }
+  if (pendientes.length) hacerDeFondo(async () => { for (const m of pendientes) await archivar(m); }, pendientes.map((m) => m.id), pendientes.length === 1 ? "Archivado el correo que quedó a medias" : `Archivados ${pendientes.length} correos que quedaron a medias`);
 }
 async function enviar(m, texto) {
   const p = prop(m);
@@ -457,7 +480,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=42"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=43"});
   marco.html = html;
   marcos.push(marco);
   return marco;
