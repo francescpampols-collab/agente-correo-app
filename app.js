@@ -19,7 +19,7 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, consulta: "", buscando: false, buscado: false, fuera: null, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
+const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, cargado: false, consulta: "", buscando: false, buscado: false, fuera: null, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -53,6 +53,8 @@ function podarTrabajo() {
   if (estado.redacta && !vivos.has(estado.redacta.mid)) estado.redacta = null;
 }
 document.addEventListener("input", guardarTrabajo);
+// Si aún hay envíos o archivados a medio guardar, el navegador avisa antes de cerrar o recargar.
+window.addEventListener("beforeunload", (e) => { if (enProceso.size) { e.preventDefault(); e.returnValue = ""; } });
 function el(tag, attrs, ...hijos) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -242,6 +244,7 @@ async function cargar() {
     estado.datos = Object.assign(await listarTodo(), {busca: (estado.datos.busca || []).filter((m) => m.archivado)});
     estado.lista = await leerLista();
     if (estado.sel && !todos().some((m) => m.id === estado.sel)) cerrar();
+    estado.cargado = true;
     if (enProceso.size) quitar(Array.from(enProceso));
     podarTrabajo();
   } catch (e) { avisar("No se ha podido leer el buzón: " + e.message); }
@@ -331,7 +334,7 @@ function hacerDeFondo(tarea, ids, hecho, recargar) {
       await tarea();
       ids.forEach((x) => enProceso.delete(x));
       if (hecho) avisar(hecho);
-      if (!estado.sel) pintar();
+      if (!estado.sel) pintar(); else if (!enProceso.size) $("resumen").textContent = "Cambios guardados en Outlook";
       if (recargar && !estado.sel) cargar();
     } catch (e) {
       ids.forEach((x) => enProceso.delete(x));
@@ -450,7 +453,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=34"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=35"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1161,7 +1164,10 @@ function pintar() {
   const d = estado.datos;
   const g = grupos();
   const n = {busca: d.busca.length, nuevo: d.nuevo.length, resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length};
-  $("resumen").textContent = `${n.resp} ${n.resp === 1 ? "respuesta lista" : "respuestas listas"} y ${d.news.length + n.arch} para archivar`;
+  // Mientras se lee el buzón no se dice «nada pendiente», y mientras quedan cambios por guardar se avisa.
+  $("resumen").textContent = enProceso.size ? `Guardando ${enProceso.size} ${enProceso.size === 1 ? "cambio" : "cambios"} en Outlook… no cierres ni recargues`
+    : !estado.cargado ? "Leyendo tu bandeja…"
+    : `${n.resp} ${n.resp === 1 ? "respuesta lista" : "respuestas listas"} y ${d.news.length + n.arch} para archivar`;
   $("pestanas").replaceChildren(...PESTANAS.map(([k, t]) => el("button", {type: "button", "aria-pressed": String(estado.tab === k), onclick: () => { estado.tab = k; estado.confirma = false; pintar(); }}, t, el("span", {class: "cuenta"}, String(n[k])))));
   let cartas;
   if (estado.tab === "resp") cartas = d.resp.map(cartaRespuesta);
@@ -1177,6 +1183,7 @@ function pintar() {
   else cartas = d[estado.tab].map(cartaSimple);
   if (estado.tab === "nuevo" && cartas.length) cartas.unshift(el("p", {class: "pide"}, "Recién llegados. El agente todavía no los ha clasificado; puedes abrirlos, contestarlos o archivarlos ya."));
   $("lista").replaceChildren(...(cartas.length ? cartas : [el("div", {class: "vacio"}, el("b", {}, "Nada pendiente aquí"), estado.tab === "nuevo" ? "No hay correos nuevos sin clasificar." : "La bandeja de entrada solo guarda lo que queda por resolver.")]));
+  if (!estado.cargado && estado.tab !== "busca") $("lista").replaceChildren(el("div", {class: "vacio"}, el("b", {}, "Leyendo tu bandeja…"), "Un momento."));
   pintarDetalle();
 
   // El envío en bloque deja fuera lo marcado para revisar y lo que tiene huecos: eso se envía de uno en uno.
