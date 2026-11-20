@@ -224,9 +224,15 @@ async function leerCarpetas() {
   return mapa;
 }
 function carpetaDe(m) {
+  // Mismas carpetas que usa Francesc en Outlook: los avisos de EKON, la web y InfoJobs tienen la suya;
+  // el resto va a Interns (empresas del grupo) o Externs según el remitente.
+  const quien = dir(m), asunto = m.subject || "";
   let d = prop(m).destino;
-  // Sin clasificar todavía: internos (empresas del grupo) o externos según el dominio del remitente.
-  if (typeof d !== "string") d = /@(pampols\.es|optimalpkg\.com|pampols\.fr)$/i.test(dir(m)) ? "Interns" : "Externs";
+  if (/^ekon@(pampols\.es|optimalpkg\.com)$/i.test(quien)) d = /^\s*Tarea\s+N/i.test(asunto) ? "Tarea" : /^\s*Validaci[oó]n/i.test(asunto) ? "Validacions" : "Ekon";
+  else if (/@([a-z0-9-]+\.)*infojobs\.net$/i.test(quien)) d = "infojobs";
+  else if (/^(tpvvirtual@redsys\.es|web@envaseonline\.com)$/i.test(quien) || /La operación con nº de pedido|ENVASE ONLINE\s*\|/i.test(asunto)) d = "Web";
+  else if (typeof d !== "string") d = /@(pampols\.es|optimalpkg\.com|pampols\.fr)$/i.test(quien) ? "Interns" : "Externs";
+  if (!(estado.carpetas && estado.carpetas[d])) d = /@(pampols\.es|optimalpkg\.com|pampols\.fr)$/i.test(quien) ? "Interns" : "Externs";
   return estado.carpetas && estado.carpetas[d] ? {nombre: d, id: estado.carpetas[d]} : {nombre: "Archivo", id: "archive"};
 }
 async function cargar() {
@@ -432,7 +438,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=28"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=29"});
   marco.html = html;
   marcos.push(marco);
   return marco;
