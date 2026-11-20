@@ -162,11 +162,18 @@ async function listarTodo() {
   const q = new URLSearchParams({
     "$filter": etiquetas.map((e) => `categories/any(c:c eq '${e}')`).join(" or "),
     "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink",
-    "$expand": `singleValueExtendedProperties($filter=id eq '${PROP}')`,
+    "$expand": `singleValueExtendedProperties($filter=id eq '${PROP}' or id eq 'Integer 0x1081')`,
     "$top": "200",
   });
   const j = await api("GET", "/me/mailFolders/inbox/messages?" + q);
   const lista = (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
+  // 0x1081 es la marca de Outlook de «respondido / reenviado»; se aparta para que no estorbe a la propiedad del agente.
+  for (const m of lista) {
+    const todas = m.singleValueExtendedProperties || [];
+    const verbo = todas.find((x) => /^Integer/i.test(x.id || ""));
+    m.verbo = verbo ? Number(verbo.value) : 0;
+    m.singleValueExtendedProperties = todas.filter((x) => !/^Integer/i.test(x.id || ""));
+  }
   await completar(lista);
   const de = (e) => lista.filter((m) => (m.categories || []).includes(e));
   return {resp: de(CAT.resp), news: de(CAT.news), arch: de(CAT.arch), pend: de(CAT.pend).concat(de(CAT.manual))};
@@ -256,6 +263,7 @@ async function enviar(m, texto) {
   await api("PATCH", `/me/messages/${id(nuevo.id)}`, {body: {contentType: "html", content: cuerpo}});
   await api("POST", `/me/messages/${id(nuevo.id)}/send`);
   if (p.draftId) await api("DELETE", `/me/messages/${id(p.draftId)}`).catch(() => {});
+  if (!(m.categories || []).includes("Respondido")) m.categories = (m.categories || []).concat("Respondido");
   await archivar(m);
 }
 async function descartar(m) {
@@ -414,7 +422,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=23"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=24"});
   marco.html = html;
   marcos = marcos.filter((x) => x.isConnected).concat(marco);
   return marco;
@@ -467,6 +475,7 @@ function cartaRespuesta(m) {
   return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
     remitente(m),
     titulo(m),
+    marcas(m),
     p.pide ? el("p", {class: "pide"}, "Pide: " + p.pide) : null,
     el("p", {class: "resp"}, p.respuesta || ""),
     destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
@@ -490,6 +499,20 @@ function cartaGrupo(g) {
       g.dir ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivarSiempre(g), ids, "Archivado. Lo nuevo de este remitente se archivará solo en cada pasada")}, "Archivar siempre") : null,
       el("button", {class: "plano peligro", type: "button", onclick: () => hacer(() => pedirBaja(g), ids, posible ? "La baja se tramita en la próxima pasada" : "Este boletín no admite baja automática: te aparecerá en Tuyos")}, "Dar de baja")));
 }
+// Lo que ya has hecho con un correo, a la vista en la lista y al abrirlo.
+const CAT_HECHO = {responder: "Respondido", todos: "Respondido", reenviar: "Reenviado"};
+const CAT_PUESTA = "Reacción puesta: ";
+function marcas(m) {
+  const cats = m.categories || [], lista = [];
+  if (cats.includes("Respondido") || m.verbo === 102 || m.verbo === 103) lista.push(["hecho", "Respondido"]);
+  if (cats.includes("Reenviado") || m.verbo === 104) lista.push(["hecho", "Reenviado"]);
+  const pend = reaccionPendiente(m);
+  if (pend) lista.push(["cola", pend[0] + " en cola"]);
+  const puesta = cats.find((x) => x.startsWith(CAT_PUESTA));
+  if (puesta) { const r = REACCIONES.find((y) => y[1] === puesta.slice(CAT_PUESTA.length)); lista.push(["hecho", (r ? r[0] + " " : "") + "Reacción puesta"]); }
+  if (enProceso.has(m.id)) lista.push(["cola", "Enviando…"]);
+  return lista.length ? el("div", {class: "marcas"}, ...lista.map(([tipo, texto]) => el("span", {class: "marca " + tipo}, texto))) : null;
+}
 function cartaSimple(m) {
   const p = prop(m);
   const baja = p.enlace ? enlaceSeguro(p.enlace) : null;
@@ -497,6 +520,7 @@ function cartaSimple(m) {
   return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
     remitente(m),
     titulo(m),
+    marcas(m),
     p.pide ? el("p", {class: "pide"}, p.pide) : null,
     p.aviso ? el("span", {class: "aviso"}, p.aviso) : null,
     el("div", {class: "fila"},
@@ -586,7 +610,7 @@ function reaccionPendiente(m) {
   return c ? REACCIONES.find((r) => r[1] === c.slice(CAT_REACCION.length)) || null : null;
 }
 async function pedirReaccion(m, nombre) {
-  const cats = (m.categories || []).filter((x) => !x.startsWith(CAT_REACCION));
+  const cats = (m.categories || []).filter((x) => !x.startsWith(CAT_REACCION) && !(nombre && x.startsWith("Reacción puesta: ")));
   if (nombre) cats.push(CAT_REACCION + nombre);
   await api("PATCH", `/me/messages/${id(m.id)}`, {categories: cats});
   m.categories = cats;
@@ -812,6 +836,12 @@ async function enviarManual(m, r, archivarDespues) {
   await api("POST", `/me/messages/${id(nuevo.id)}/send`);
   if (estado.redacta && estado.redacta.mid === m.id) estado.redacta = null;
   delete estado.propuestas[m.id];
+  // Queda marcado como respondido o reenviado, aquí y en Outlook (categoría).
+  const hecho = CAT_HECHO[r.modo];
+  if (!(m.categories || []).includes(hecho)) {
+    m.categories = (m.categories || []).concat(hecho);
+    if (!archivarDespues) await api("PATCH", `/me/messages/${id(m.id)}`, {categories: m.categories}).catch(() => {});
+  }
   if (archivarDespues) await archivar(m);
 }
 function barraOutlook(m) {
@@ -874,6 +904,7 @@ function pintarDetalle() {
     el("div", {class: "carta cabecera"}, remitente(m, "div"), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
       c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null,
       c && c.fecha ? el("div", {class: "de"}, fechaLarga(c.fecha)) : null,
+      marcas(m),
       barraOutlook(m),
       barraReacciones(m)),
     panelManual(m),
