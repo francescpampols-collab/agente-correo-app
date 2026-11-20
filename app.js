@@ -120,7 +120,7 @@ const id = (x) => encodeURIComponent(x);
 async function listarTodo() {
   const etiquetas = [CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual];
   const q = new URLSearchParams({
-    "$filter": `categories/any(c:${etiquetas.map((e) => `c eq '${e}'`).join(" or ")})`,
+    "$filter": etiquetas.map((e) => `categories/any(c:c eq '${e}')`).join(" or "),
     "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink",
     "$expand": `singleValueExtendedProperties($filter=id eq '${PROP}')`,
     "$top": "200",
