@@ -58,6 +58,10 @@ function de(m) {
   const e = (m.from || {}).emailAddress || {};
   return e.name && e.address ? `${e.name} <${e.address}>` : e.address || e.name || "(sin remitente)";
 }
+// Quita del extracto el aviso que el servidor de correo antepone a los mensajes externos.
+function extracto(m) {
+  return (m.bodyPreview || "").replace(/^\s*Precaución:[\s\S]*?archivos adjuntos\.\s*/i, "").trim();
+}
 function dir(m) { return (((m.from || {}).emailAddress || {}).address || "").toLowerCase(); }
 function enlaceSeguro(u) {
   try { const x = new URL(u); return x.protocol === "https:" && !x.username && !x.password ? x : null; } catch (e) { return null; }
@@ -299,7 +303,7 @@ function pintarDetalle() {
   d.append(
     el("button", {class: "plano izquierda", id: "volver", type: "button", onclick: () => { cerrar(); pintar(); }}, "‹ Bandeja"),
     el("div", {}, el("div", {class: "de"}, de(m)), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)")),
-    el("div", {class: "carta"}, el("span", {class: "eti"}, "Te escriben"), el("p", {class: "pide normal"}, m.bodyPreview || ""),
+    el("div", {class: "carta"}, el("span", {class: "eti"}, "Te escriben"), el("p", {class: "pide normal"}, extracto(m)),
       outlook ? el("a", {href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Ver el correo completo en Outlook") : null),
     p.aviso ? el("span", {class: "aviso"}, "Revisar bien · " + p.aviso) : null,
     el("span", {class: "eti"}, "Tu respuesta" + (p.todos ? " (a todos)" : "")),
@@ -314,7 +318,7 @@ function pintar() {
   const d = estado.datos;
   const g = grupos();
   const n = {resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length};
-  $("resumen").textContent = `${n.resp} respuestas listas · ${d.news.length + n.arch} para archivar`;
+  $("resumen").textContent = `${n.resp} ${n.resp === 1 ? "respuesta lista" : "respuestas listas"} · ${d.news.length + n.arch} para archivar`;
   $("pestanas").replaceChildren(...PESTANAS.map(([k, t]) => el("button", {type: "button", "aria-pressed": String(estado.tab === k), onclick: () => { estado.tab = k; estado.confirma = false; pintar(); }}, `${t} · ${n[k]}`)));
   let cartas;
   if (estado.tab === "resp") cartas = d.resp.map(cartaRespuesta);
