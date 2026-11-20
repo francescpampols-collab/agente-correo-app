@@ -14,7 +14,7 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, confirma: false};
+const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -257,16 +257,51 @@ async function hacer(tarea, ids, hecho, recargar) {
 }
 
 // ---------- pantalla ----------
-function abrir(mid) { estado.sel = mid; document.body.classList.add("viendo"); pintar(); }
+function abrir(mid) {
+  estado.sel = mid;
+  document.body.classList.add("viendo");
+  pintar();
+  if (!estado.cuerpos[mid]) cargarCorreo(mid);
+}
+// Trae el correo entero (texto y lista de adjuntos) para leerlo dentro de la app.
+async function cargarCorreo(mid) {
+  try {
+    const j = await api("GET", `/me/messages/${id(mid)}?$select=subject,body,toRecipients,ccRecipients,hasAttachments,receivedDateTime`);
+    const c = {texto: (((j || {}).body || {}).content || "").replace(/^\s*Precaución:[\s\S]*?archivos adjuntos\.\s*/i, "").replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim(), para: [], adjuntos: [], fecha: (j || {}).receivedDateTime || ""};
+    for (const r of ((j || {}).toRecipients || []).concat((j || {}).ccRecipients || [])) if (r.emailAddress && r.emailAddress.address) c.para.push(r.emailAddress.address);
+    if ((j || {}).hasAttachments) {
+      const a = await api("GET", `/me/messages/${id(mid)}/attachments?$select=id,name,size,contentType`);
+      c.adjuntos = ((a || {}).value || []).filter((x) => x.name);
+    }
+    estado.cuerpos[mid] = c;
+  } catch (e) { estado.cuerpos[mid] = {error: e.message, texto: "", para: [], adjuntos: []}; }
+  if (estado.sel === mid) pintarDetalle();
+}
+async function descargar(mid, adj) {
+  const r = await fetch(`${GRAPH}/me/messages/${id(mid)}/attachments/${id(adj.id)}/$value`, {headers: {Authorization: "Bearer " + await token(), Prefer: 'IdType="ImmutableId"'}});
+  if (!r.ok) throw new Error(`Outlook ha respondido ${r.status}`);
+  const url = URL.createObjectURL(await r.blob());
+  const a = el("a", {href: url, download: adj.name});
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+function alPulsarCarta(mid) {
+  return (e) => { if (!e.target.closest("button, a")) abrir(mid); };
+}
+function titulo(m) {
+  return el("button", {class: "asunto", type: "button", onclick: () => abrir(m.id)}, m.subject || "(sin asunto)");
+}
 function cerrar() { estado.sel = null; document.body.classList.remove("viendo"); }
 function faltaDato(m, texto) { return /\[FALTA/i.test(texto != null ? texto : prop(m).respuesta || ""); }
 function destinatarios(p) { return Array.isArray(p.para) && p.para.length ? "Se envía a: " + p.para.slice(0, 6).join(", ") : null; }
 
 function cartaRespuesta(m) {
   const p = prop(m);
-  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : "")},
+  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
     el("span", {class: "de"}, de(m)),
-    el("span", {class: "asunto"}, m.subject || "(sin asunto)"),
+    titulo(m),
     p.pide ? el("p", {class: "pide"}, "Pide: " + p.pide) : null,
     el("p", {class: "resp"}, p.respuesta || ""),
     destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
@@ -280,9 +315,10 @@ function cartaRespuesta(m) {
 function cartaGrupo(g) {
   const ids = g.items.map((m) => m.id);
   const posible = g.items.some((m) => prop(m).baja_posible);
-  return el("div", {class: "carta"},
+  return el("div", {class: "carta" + (g.items.some((m) => m.id === estado.sel) ? " sel" : ""), onclick: alPulsarCarta(g.items[0].id)},
     el("span", {class: "asunto"}, g.nombre),
-    el("span", {class: "pide"}, g.items.length === 1 ? (g.items[0].subject || "1 correo") : g.items.length + " correos"),
+    ...g.items.slice(0, 5).map((m) => el("button", {class: "pide enlace", type: "button", onclick: () => abrir(m.id)}, m.subject || "(sin asunto)")),
+    g.items.length > 5 ? el("span", {class: "pide"}, "y " + (g.items.length - 5) + " más") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => hacer(async () => { for (const m of g.items) await archivar(m); }, ids, "Archivado en " + carpetaDe(g.items[0]).nombre)}, "Archivar en " + carpetaDe(g.items[0]).nombre),
       g.dir ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivarSiempre(g), ids, "Archivado. Lo nuevo de este remitente se archivará solo en cada pasada")}, "Archivar siempre") : null,
@@ -292,9 +328,9 @@ function cartaSimple(m) {
   const p = prop(m);
   const baja = p.enlace ? enlaceSeguro(p.enlace) : null;
   const outlook = m.webLink ? enlaceSeguro(m.webLink) : null;
-  return el("div", {class: "carta"},
+  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
     el("span", {class: "de"}, de(m)),
-    el("span", {class: "asunto"}, m.subject || "(sin asunto)"),
+    titulo(m),
     p.pide ? el("p", {class: "pide"}, p.pide) : null,
     p.aviso ? el("span", {class: "aviso"}, p.aviso) : null,
     el("div", {class: "fila"},
@@ -306,32 +342,49 @@ function cartaSimple(m) {
 function pintarDetalle() {
   const d = $("detalle");
   d.replaceChildren();
-  const m = estado.datos.resp.find((x) => x.id === estado.sel);
+  const m = todos().find((x) => x.id === estado.sel);
   if (!m) {
-    d.append(el("div", {class: "vacio"}, el("b", {}, "Elige una respuesta"), "Aquí verás el correo y el borrador para retocarlo."));
+    d.append(el("div", {class: "vacio"}, el("b", {}, "Elige un correo"), "Pulsa cualquier correo de la lista para leerlo aquí."));
     return;
   }
   const p = prop(m);
+  const c = estado.cuerpos[m.id];
   const outlook = m.webLink ? enlaceSeguro(m.webLink) : null;
-  const area = el("textarea", {id: "borrador", "aria-label": "Tu respuesta"});
-  area.value = p.respuesta || "";
-  const botonEnviar = el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviar(m, area.value), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar en " + carpetaDe(m).nombre);
-  const comprobar = () => { botonEnviar.disabled = faltaDato(m, area.value) || !area.value.trim(); };
-  area.addEventListener("input", comprobar);
-  comprobar();
+  const esRespuesta = estado.datos.resp.includes(m);
+  const esArchivar = estado.datos.arch.includes(m) || estado.datos.news.includes(m);
   d.append(
     el("button", {class: "plano izquierda", id: "volver", type: "button", onclick: () => { cerrar(); pintar(); }}, "‹ Bandeja"),
-    el("div", {}, el("div", {class: "de"}, de(m)), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)")),
-    el("div", {class: "carta"}, el("span", {class: "eti"}, "Te escriben"), el("p", {class: "pide normal"}, extracto(m)),
-      outlook ? el("a", {href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Ver el correo completo en Outlook") : null),
-    p.aviso ? el("span", {class: "aviso"}, "Revisar bien · " + p.aviso) : null,
-    el("span", {class: "eti"}, "Tu respuesta" + (p.todos ? " (a todos)" : "")),
-    destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
-    area,
-    faltaDato(m) ? el("span", {class: "pide"}, "Completa los huecos [FALTA: …] para poder enviar.") : null,
-    el("div", {class: "fila"},
-      el("button", {class: "plano", type: "button", onclick: () => hacer(() => descartar(m), [m.id], "Borrador descartado; el correo queda en Tuyos")}, "Descartar"),
-      botonEnviar));
+    el("div", {}, el("div", {class: "de"}, de(m)), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
+      c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null),
+    !esRespuesta && p.pide ? el("p", {class: "pide"}, p.pide) : null,
+    p.aviso ? el("span", {class: "aviso"}, (esRespuesta ? "Revisar bien · " : "") + p.aviso) : null,
+    el("div", {class: "carta"},
+      el("span", {class: "eti"}, "Correo"),
+      !c ? el("p", {class: "pide"}, "Cargando…")
+        : c.error ? el("p", {class: "pide"}, "No se ha podido cargar el correo: " + c.error)
+        : el("p", {class: "cuerpo"}, c.texto || "(sin texto)"),
+      ...((c && c.adjuntos) || []).map((a) => el("button", {class: "plano adjunto", type: "button", onclick: () => hacer(() => descargar(m.id, a), [], "Descargado: " + a.name)}, "Adjunto · " + a.name)),
+      outlook ? el("a", {href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null));
+  if (esRespuesta) {
+    const area = el("textarea", {id: "borrador", "aria-label": "Tu respuesta"});
+    area.value = p.respuesta || "";
+    const botonEnviar = el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviar(m, area.value), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar en " + carpetaDe(m).nombre);
+    const comprobar = () => { botonEnviar.disabled = faltaDato(m, area.value) || !area.value.trim(); };
+    area.addEventListener("input", comprobar);
+    comprobar();
+    d.append(
+      el("span", {class: "eti"}, "Tu respuesta" + (p.todos ? " (a todos)" : "")),
+      destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
+      area,
+      faltaDato(m) ? el("span", {class: "pide"}, "Completa los huecos [FALTA: …] para poder enviar.") : null,
+      el("div", {class: "fila"},
+        el("button", {class: "plano", type: "button", onclick: () => hacer(() => descartar(m), [m.id], "Borrador descartado; el correo queda en Tuyos")}, "Descartar"),
+        botonEnviar));
+  } else {
+    d.append(el("div", {class: "fila"},
+      esArchivar ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
+      el("button", {class: "lleno", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
+  }
 }
 function pintar() {
   const d = estado.datos;

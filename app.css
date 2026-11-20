@@ -56,3 +56,10 @@ label{font-size:13px;font-weight:600;display:flex;flex-direction:column;gap:6px}
   #detalle{border-left:1px solid var(--borde)}
   #volver{display:none}
 }
+.carta{cursor:pointer}
+#detalle .carta{cursor:auto}
+button.asunto,button.enlace{background:none;border:0;padding:0;text-align:left;cursor:pointer;color:inherit}
+button.asunto{font-size:16px;font-weight:600;overflow-wrap:anywhere}
+button.enlace{color:var(--gris);font-size:14px;text-decoration:underline;overflow-wrap:anywhere;min-height:32px}
+.cuerpo{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:1.5}
+.adjunto{text-align:left;padding:10px 14px;height:auto;overflow-wrap:anywhere}
