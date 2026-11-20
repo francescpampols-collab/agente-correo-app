@@ -415,6 +415,7 @@ window.addEventListener("message", (e) => {
   const marco = marcos.find((x) => x.contentWindow === e.source);
   if (!marco || !e.data) return;
   if (e.data.tipo === "listo" && !marco.enviado && marco.html) {
+    marcos = marcos.filter((x) => x.isConnected);
     marco.enviado = true;
     marco.contentWindow.postMessage({tipo: "correo", html: marco.html}, "*");
   } else if (e.data.tipo === "alto" && Number.isFinite(e.data.alto)) {
@@ -422,9 +423,9 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=24"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=25"});
   marco.html = html;
-  marcos = marcos.filter((x) => x.isConnected).concat(marco);
+  marcos.push(marco);
   return marco;
 }
 // Tu firma de Outlook tal como saldrá al final del correo.
@@ -461,6 +462,11 @@ function bloqueResumen(m, p, c) {
       : p.pide ? el("p", {class: "pide normal"}, p.pide) : el("p", {class: "pide"}, "Sin resumen todavía."),
     !largo && c && !c.error && leer("agente.ia") ? el("button", {class: "enlace izquierda", type: "button", onclick: pedir}, "Resumir a fondo con IA") : null,
     estado.pideClave && !leer("agente.ia") && !(estado.redacta && estado.redacta.mid === m.id) ? activarIA() : null);
+}
+function lineasDestino(para, cc) {
+  return el("div", {class: "destino"},
+    el("div", {class: "de"}, el("b", {}, "Para: "), para.length ? para.join(", ") : "nadie"),
+    el("div", {class: "de"}, el("b", {}, "CC: "), cc.length ? cc.join(", ") : "nadie en copia"));
 }
 function fechaLarga(iso) {
   const f = new Date(iso);
@@ -761,7 +767,9 @@ function bloquePropuesta(m, esRespuesta) {
     el("span", {class: "eti"}, "Propuesta de respuesta (" + x.modelo + ")"),
     el("p", {class: "cuerpo"}, x.texto),
     vistaFirma(),
-    el("span", {class: "de"}, "Para: " + (r().para.concat(r().cc).join(", ") || "sin destinatario")),
+    el("span", {class: "eti"}, "Se enviará a"),
+    lineasDestino(r().para, r().cc),
+    el("button", {class: "enlace izquierda", type: "button", onclick: () => { delete x.destino; x.todos = !(r().modo === "todos"); pintarDetalle(); }}, r().modo === "todos" ? "Responder solo al remitente" : "Responder a todos (incluye a los que estaban en copia)"),
     falta ? el("span", {class: "aviso"}, "Tiene huecos [FALTA: …]: edítala para completarlos") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => pedirTest(m)}, "No me convence"),
@@ -902,7 +910,7 @@ function pintarDetalle() {
   poner(d,
     el("button", {class: "plano izquierda", id: "volver", type: "button", onclick: () => { cerrar(); pintar(); }}, "‹ Bandeja"),
     el("div", {class: "carta cabecera"}, remitente(m, "div"), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
-      c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null,
+      c ? lineasDestino(c.a || [], c.cc || []) : null,
       c && c.fecha ? el("div", {class: "de"}, fechaLarga(c.fecha)) : null,
       marcas(m),
       barraOutlook(m),
