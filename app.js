@@ -14,7 +14,7 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], confirma: false};
+const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, confirma: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -166,9 +166,21 @@ async function guardarLista(lista) {
   await api("PATCH", "/me/mailFolders/inbox", {singleValueExtendedProperties: [{id: PROP_LISTA, value: JSON.stringify(lista)}]});
   estado.lista = lista;
 }
+// Carpetas de primer nivel del buzón, para archivar donde indique el motor (internos o externos).
+async function leerCarpetas() {
+  const j = await api("GET", "/me/mailFolders?$top=200&$select=id,displayName");
+  const mapa = {};
+  for (const f of j.value || []) mapa[f.displayName] = f.id;
+  return mapa;
+}
+function carpetaDe(m) {
+  const d = prop(m).destino;
+  return typeof d === "string" && estado.carpetas && estado.carpetas[d] ? {nombre: d, id: estado.carpetas[d]} : {nombre: "Archivo", id: "archive"};
+}
 async function cargar() {
   $("recargar").disabled = true;
   try {
+    if (!estado.carpetas) estado.carpetas = await leerCarpetas();
     estado.datos = await listarTodo();
     estado.lista = await leerLista();
     if (estado.sel && !todos().some((m) => m.id === estado.sel)) cerrar();
@@ -194,7 +206,7 @@ function grupos() {
 // ---------- acciones sobre el buzón ----------
 async function archivar(m) {
   await api("PATCH", `/me/messages/${id(m.id)}`, {categories: (m.categories || []).filter((c) => !c.startsWith("Agente:"))});
-  await api("POST", `/me/messages/${id(m.id)}/move`, {destinationId: "archive"});
+  await api("POST", `/me/messages/${id(m.id)}/move`, {destinationId: carpetaDe(m).id});
 }
 async function enviar(m, texto) {
   const p = prop(m);
@@ -213,6 +225,11 @@ async function enviar(m, texto) {
 async function descartar(m) {
   const p = prop(m);
   if (p.draftId) await api("DELETE", `/me/messages/${id(p.draftId)}`).catch(() => {});
+  const cats = (m.categories || []).filter((c) => !c.startsWith("Agente:")).concat(CAT.pend);
+  await api("PATCH", `/me/messages/${id(m.id)}`, {categories: cats});
+}
+// Corrección de Francesc: esto no es para archivar, lo tiene que gestionar él.
+async function pasarATuyos(m) {
   const cats = (m.categories || []).filter((c) => !c.startsWith("Agente:")).concat(CAT.pend);
   await api("PATCH", `/me/messages/${id(m.id)}`, {categories: cats});
 }
@@ -253,11 +270,12 @@ function cartaRespuesta(m) {
     p.pide ? el("p", {class: "pide"}, "Pide: " + p.pide) : null,
     el("p", {class: "resp"}, p.respuesta || ""),
     destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
+    el("span", {class: "de"}, "Al enviar se archiva en " + carpetaDe(m).nombre),
     p.aviso ? el("span", {class: "aviso"}, "Revisar bien · " + p.aviso) : null,
     faltaDato(m) ? el("span", {class: "aviso"}, "Falta un dato") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => abrir(m.id)}, "Ver y editar"),
-      el("button", {class: "lleno", type: "button", disabled: faltaDato(m), onclick: () => hacer(() => enviar(m, null), [m.id], "Enviado y archivado")}, "Enviar")));
+      el("button", {class: "lleno", type: "button", disabled: faltaDato(m), onclick: () => hacer(() => enviar(m, null), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar")));
 }
 function cartaGrupo(g) {
   const ids = g.items.map((m) => m.id);
@@ -266,7 +284,7 @@ function cartaGrupo(g) {
     el("span", {class: "asunto"}, g.nombre),
     el("span", {class: "pide"}, g.items.length === 1 ? (g.items[0].subject || "1 correo") : g.items.length + " correos"),
     el("div", {class: "fila"},
-      el("button", {class: "plano", type: "button", onclick: () => hacer(async () => { for (const m of g.items) await archivar(m); }, ids, "Archivado")}, "Archivar"),
+      el("button", {class: "plano", type: "button", onclick: () => hacer(async () => { for (const m of g.items) await archivar(m); }, ids, "Archivado en " + carpetaDe(g.items[0]).nombre)}, "Archivar en " + carpetaDe(g.items[0]).nombre),
       g.dir ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivarSiempre(g), ids, "Archivado. Lo nuevo de este remitente se archivará solo en cada pasada")}, "Archivar siempre") : null,
       el("button", {class: "plano peligro", type: "button", onclick: () => hacer(() => pedirBaja(g), ids, posible ? "La baja se tramita en la próxima pasada" : "Este boletín no admite baja automática: te aparecerá en Tuyos")}, "Dar de baja")));
 }
@@ -282,7 +300,8 @@ function cartaSimple(m) {
     el("div", {class: "fila"},
       baja ? el("a", {class: "plano", href: baja.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir la baja en " + baja.hostname) : null,
       outlook ? el("a", {class: "plano", href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null,
-      el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado")}, "Archivar")));
+      estado.tab === "arch" ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
+      el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
 }
 function pintarDetalle() {
   const d = $("detalle");
@@ -296,7 +315,7 @@ function pintarDetalle() {
   const outlook = m.webLink ? enlaceSeguro(m.webLink) : null;
   const area = el("textarea", {id: "borrador", "aria-label": "Tu respuesta"});
   area.value = p.respuesta || "";
-  const botonEnviar = el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviar(m, area.value), [m.id], "Enviado y archivado")}, "Enviar y archivar");
+  const botonEnviar = el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviar(m, area.value), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar en " + carpetaDe(m).nombre);
   const comprobar = () => { botonEnviar.disabled = faltaDato(m, area.value) || !area.value.trim(); };
   area.addEventListener("input", comprobar);
   comprobar();
@@ -352,7 +371,7 @@ function pintar() {
   $("todo").onclick = !accion ? null : () => {
     if (!estado.confirma) { estado.confirma = true; pintar(); return; }
     estado.confirma = false;
-    hacer(accion, ids, "Hecho", true);
+    hacer(accion, ids, estado.tab === "resp" ? "Enviado y archivado" : "Archivado, cada correo en su carpeta (Interns o Externs)", true);
   };
 }
 
