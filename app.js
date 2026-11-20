@@ -8,6 +8,7 @@ if (window.top !== window.self) {
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const PROP = "String {00020329-0000-0000-C000-000000000046} Name AgenteCorreo";
 const PROP_LISTA = "String {00020329-0000-0000-C000-000000000046} Name AgenteCorreoSiempre";
+const PROP_FIRMA = "String {00020329-0000-0000-C000-000000000046} Name AgenteCorreoFirma";
 const PROP_ESTILO = "String {00020329-0000-0000-C000-000000000046} Name AgenteCorreoEstilo";
 const IA_MODELOS = ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 const IA_NOMBRES = {"claude-fable-5-2": "Fable 5.2", "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5"};
@@ -18,7 +19,7 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, redacta: null, yo: null, estilo: null, pideClave: false};
+const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -219,16 +220,13 @@ async function archivar(m) {
 }
 async function enviar(m, texto) {
   const p = prop(m);
-  if (texto != null && texto.trim() !== (p.respuesta || "").trim()) {
-    const nuevo = await api("POST", `/me/messages/${id(m.id)}/${p.todos ? "createReplyAll" : "createReply"}`, undefined, "html");
-    const cuerpo = insertarEnCuerpo((nuevo.body || {}).content || "", textoAHtml(texto));
-    await api("PATCH", `/me/messages/${id(nuevo.id)}`, {body: {contentType: "html", content: cuerpo}});
-    await api("POST", `/me/messages/${id(nuevo.id)}/send`);
-    if (p.draftId) await api("DELETE", `/me/messages/${id(p.draftId)}`).catch(() => {});
-  } else {
-    if (!p.draftId) throw new Error("No encuentro el borrador de este correo");
-    await api("POST", `/me/messages/${id(p.draftId)}/send`);
-  }
+  const cuerpoTexto = texto != null ? texto : p.respuesta || "";
+  if (!cuerpoTexto.trim()) throw new Error("la respuesta está vacía");
+  const nuevo = await api("POST", `/me/messages/${id(m.id)}/${p.todos ? "createReplyAll" : "createReply"}`, undefined, "html");
+  const cuerpo = insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(cuerpoTexto));
+  await api("PATCH", `/me/messages/${id(nuevo.id)}`, {body: {contentType: "html", content: cuerpo}});
+  await api("POST", `/me/messages/${id(nuevo.id)}/send`);
+  if (p.draftId) await api("DELETE", `/me/messages/${id(p.draftId)}`).catch(() => {});
   await archivar(m);
 }
 async function descartar(m) {
@@ -357,7 +355,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html) {
-  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=18"});
+  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=19"});
   marco.html = html;
   return marco;
 }
@@ -537,6 +535,18 @@ async function ia(sistema, usuario, maximo) {
   }
   throw new Error(fallo);
 }
+// Firma de Outlook de Francesc, guardada en su buzón. Va al final de todo lo que se envía desde aquí.
+async function leerFirma() {
+  if (estado.firma != null) return estado.firma;
+  const q = new URLSearchParams({"$select": "id", "$expand": `singleValueExtendedProperties($filter=id eq '${PROP_FIRMA}')`});
+  const f = await api("GET", "/me/mailFolders/inbox?" + q);
+  estado.firma = String(((f.singleValueExtendedProperties || [])[0] || {}).value || "");
+  return estado.firma;
+}
+async function conFirma(texto) {
+  const firma = await leerFirma();
+  return textoAHtml(texto) + (firma ? "<br>" + firma : "");
+}
 async function leerEstilo() {
   if (estado.estilo) return estado.estilo;
   try {
@@ -628,7 +638,7 @@ function bloquePropuesta(m, esRespuesta) {
   return el("div", {class: "carta propuesta"},
     el("span", {class: "eti"}, "Propuesta de respuesta (" + x.modelo + ")"),
     el("p", {class: "cuerpo"}, x.texto),
-    el("span", {class: "de"}, "Para: " + (r().para.concat(r().cc).join(", ") || "sin destinatario")),
+    el("span", {class: "de"}, "Para: " + (r().para.concat(r().cc).join(", ") || "sin destinatario") + ". Se añade tu firma de Outlook."),
     falta ? el("span", {class: "aviso"}, "Tiene huecos [FALTA: …]: edítala para completarlos") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => pedirTest(m)}, "No me convence"),
@@ -698,7 +708,7 @@ async function enviarManual(m, r, archivarDespues) {
   const nuevo = await api("POST", `/me/messages/${id(m.id)}/${MODOS[r.modo][0]}`, undefined, "html");
   const aLista = (l) => l.map((x) => ({emailAddress: {address: x}}));
   await api("PATCH", `/me/messages/${id(nuevo.id)}`, {
-    body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", textoAHtml(r.texto))},
+    body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(r.texto))},
     toRecipients: aLista(r.para), ccRecipients: aLista(r.cc)});
   await api("POST", `/me/messages/${id(nuevo.id)}/send`);
   estado.redacta = null;
