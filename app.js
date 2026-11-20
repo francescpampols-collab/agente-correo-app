@@ -62,6 +62,10 @@ function de(m) {
 function extracto(m) {
   return (m.bodyPreview || "").replace(/^\s*Precaución:[\s\S]*?archivos adjuntos\.\s*/i, "").trim();
 }
+function remitente(m, etiqueta) {
+  const e = (m.from || {}).emailAddress || {};
+  return el(etiqueta || "span", {class: "de"}, el("b", {}, e.name || e.address || "(sin remitente)"), e.name && e.address ? " " + e.address : null);
+}
 function dir(m) { return (((m.from || {}).emailAddress || {}).address || "").toLowerCase(); }
 function enlaceSeguro(u) {
   try { const x = new URL(u); return x.protocol === "https:" && !x.username && !x.password ? x : null; } catch (e) { return null; }
@@ -197,7 +201,7 @@ function grupos() {
   const g = new Map();
   for (const m of estado.datos.news) {
     const k = dir(m) || de(m);
-    if (!g.has(k)) g.set(k, {nombre: de(m), dir: dir(m), items: []});
+    if (!g.has(k)) g.set(k, {nombre: ((m.from || {}).emailAddress || {}).name || dir(m) || "(sin remitente)", dir: dir(m), items: []});
     g.get(k).items.push(m);
   }
   return [...g.values()];
@@ -301,13 +305,13 @@ function destinatarios(p) { return Array.isArray(p.para) && p.para.length ? "Se 
 function cartaRespuesta(m) {
   const p = prop(m);
   return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
-    el("span", {class: "de"}, de(m)),
+    remitente(m),
     titulo(m),
     p.pide ? el("p", {class: "pide"}, "Pide: " + p.pide) : null,
     el("p", {class: "resp"}, p.respuesta || ""),
     destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
     el("span", {class: "de"}, "Al enviar se archiva en " + carpetaDe(m).nombre),
-    p.aviso ? el("span", {class: "aviso"}, "Revisar bien · " + p.aviso) : null,
+    p.aviso ? el("span", {class: "aviso"}, "Revisar bien: " + p.aviso) : null,
     faltaDato(m) ? el("span", {class: "aviso"}, "Falta un dato") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => abrir(m.id)}, "Ver y editar"),
@@ -318,10 +322,11 @@ function cartaGrupo(g) {
   const posible = g.items.some((m) => prop(m).baja_posible);
   return el("div", {class: "carta" + (g.items.some((m) => m.id === estado.sel) ? " sel" : ""), onclick: alPulsarCarta(g.items[0].id)},
     el("span", {class: "asunto"}, g.nombre),
+    g.dir && g.dir !== g.nombre ? el("span", {class: "de"}, g.dir) : null,
     ...g.items.slice(0, 5).map((m) => el("button", {class: "pide enlace", type: "button", onclick: () => abrir(m.id)}, m.subject || "(sin asunto)")),
     g.items.length > 5 ? el("span", {class: "pide"}, "y " + (g.items.length - 5) + " más") : null,
     el("div", {class: "fila"},
-      el("button", {class: "plano", type: "button", onclick: () => hacer(async () => { for (const m of g.items) await archivar(m); }, ids, "Archivado en " + carpetaDe(g.items[0]).nombre)}, "Archivar en " + carpetaDe(g.items[0]).nombre),
+      el("button", {class: "plano archivo", type: "button", onclick: () => hacer(async () => { for (const m of g.items) await archivar(m); }, ids, "Archivado en " + carpetaDe(g.items[0]).nombre)}, "Archivar en " + carpetaDe(g.items[0]).nombre),
       g.dir ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivarSiempre(g), ids, "Archivado. Lo nuevo de este remitente se archivará solo en cada pasada")}, "Archivar siempre") : null,
       el("button", {class: "plano peligro", type: "button", onclick: () => hacer(() => pedirBaja(g), ids, posible ? "La baja se tramita en la próxima pasada" : "Este boletín no admite baja automática: te aparecerá en Tuyos")}, "Dar de baja")));
 }
@@ -330,7 +335,7 @@ function cartaSimple(m) {
   const baja = p.enlace ? enlaceSeguro(p.enlace) : null;
   const outlook = m.webLink ? enlaceSeguro(m.webLink) : null;
   return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
-    el("span", {class: "de"}, de(m)),
+    remitente(m),
     titulo(m),
     p.pide ? el("p", {class: "pide"}, p.pide) : null,
     p.aviso ? el("span", {class: "aviso"}, p.aviso) : null,
@@ -338,7 +343,7 @@ function cartaSimple(m) {
       baja ? el("a", {class: "plano", href: baja.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir la baja en " + baja.hostname) : null,
       outlook ? el("a", {class: "plano", href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null,
       estado.tab === "arch" ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
-      el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
+      el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
 }
 // Limpia el texto de un correo para leerlo: fuera caracteres invisibles, líneas de relleno y huecos.
 function limpiarTexto(t) {
@@ -385,16 +390,16 @@ function pintarDetalle() {
   const esArchivar = estado.datos.arch.includes(m) || estado.datos.news.includes(m);
   poner(d,
     el("button", {class: "plano izquierda", id: "volver", type: "button", onclick: () => { cerrar(); pintar(); }}, "‹ Bandeja"),
-    el("div", {}, el("div", {class: "de"}, de(m)), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
+    el("div", {}, remitente(m, "div"), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
       c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null),
     !esRespuesta && p.pide ? el("p", {class: "pide"}, p.pide) : null,
-    p.aviso ? el("span", {class: "aviso"}, (esRespuesta ? "Revisar bien · " : "") + p.aviso) : null,
+    p.aviso ? el("span", {class: "aviso"}, (esRespuesta ? "Revisar bien: " : "") + p.aviso) : null,
     el("div", {class: "carta"},
       el("span", {class: "eti"}, "Correo"),
       !c ? el("p", {class: "pide"}, "Cargando…")
         : c.error ? el("p", {class: "pide"}, "No se ha podido cargar el correo: " + c.error)
         : el("p", {class: "cuerpo"}, ...nodosDeTexto(c.texto || "(sin texto)")),
-      ...((c && c.adjuntos) || []).map((a) => el("button", {class: "plano adjunto", type: "button", onclick: () => hacer(() => descargar(m.id, a), [], "Descargado: " + a.name)}, "Adjunto · " + a.name)),
+      ...((c && c.adjuntos) || []).map((a) => el("button", {class: "plano adjunto", type: "button", onclick: () => hacer(() => descargar(m.id, a), [], "Descargado: " + a.name)}, "Adjunto: " + a.name)),
       outlook ? el("a", {href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null));
   if (esRespuesta) {
     const area = el("textarea", {id: "borrador", "aria-label": "Tu respuesta"});
@@ -414,15 +419,15 @@ function pintarDetalle() {
   } else {
     poner(d, el("div", {class: "fila"},
       esArchivar ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
-      el("button", {class: "lleno", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
+      el("button", {class: "lleno archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
   }
 }
 function pintar() {
   const d = estado.datos;
   const g = grupos();
   const n = {resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length};
-  $("resumen").textContent = `${n.resp} ${n.resp === 1 ? "respuesta lista" : "respuestas listas"} · ${d.news.length + n.arch} para archivar`;
-  $("pestanas").replaceChildren(...PESTANAS.map(([k, t]) => el("button", {type: "button", "aria-pressed": String(estado.tab === k), onclick: () => { estado.tab = k; estado.confirma = false; pintar(); }}, `${t} · ${n[k]}`)));
+  $("resumen").textContent = `${n.resp} ${n.resp === 1 ? "respuesta lista" : "respuestas listas"} y ${d.news.length + n.arch} para archivar`;
+  $("pestanas").replaceChildren(...PESTANAS.map(([k, t]) => el("button", {type: "button", "aria-pressed": String(estado.tab === k), onclick: () => { estado.tab = k; estado.confirma = false; pintar(); }}, t, el("span", {class: "cuenta"}, String(n[k])))));
   let cartas;
   if (estado.tab === "resp") cartas = d.resp.map(cartaRespuesta);
   else if (estado.tab === "news") {
@@ -451,6 +456,7 @@ function pintar() {
     ids = paraArchivar.map((m) => m.id);
   }
   $("pie").classList.toggle("oculto", !accion);
+  $("todo").classList.toggle("archivo", estado.tab !== "resp");
   $("todo").textContent = texto;
   $("todo").onclick = !accion ? null : () => {
     if (!estado.confirma) { estado.confirma = true; pintar(); return; }
