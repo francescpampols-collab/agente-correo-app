@@ -195,6 +195,7 @@ async function cargar() {
   } catch (e) { avisar("No se ha podido leer el buzón: " + e.message); }
   $("recargar").disabled = false;
   pintar();
+  quienSoy().then(precargar);
 }
 function todos() { return [].concat(estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
 function quitar(ids) {
@@ -270,49 +271,74 @@ function abrir(mid) {
   estado.sel = mid;
   document.body.classList.add("viendo");
   pintar();
-  if (!estado.cuerpos[mid]) cargarCorreo(mid);
+  cargarCorreo(mid);
 }
 // Trae el correo entero (texto y lista de adjuntos) para leerlo dentro de la app.
 function direcciones(lista) {
   return (lista || []).map((r) => ((r.emailAddress || {}).address || "").trim()).filter(Boolean);
 }
-async function cargarCorreo(mid) {
+const enCurso = new Map();
+function cargarCorreo(mid) {
+  if (estado.cuerpos[mid] && !estado.cuerpos[mid].error) return Promise.resolve();
+  if (!enCurso.has(mid)) enCurso.set(mid, traerCorreo(mid).finally(() => enCurso.delete(mid)));
+  return enCurso.get(mid);
+}
+function repintarSi(mid) { if (estado.sel === mid && !estado.redacta) pintarDetalle(); }
+// Texto y formato se piden a la vez; el texto se enseña en cuanto llega y el formato lo sustituye después.
+async function traerCorreo(mid) {
+  const pHtml = api("GET", `/me/messages/${id(mid)}?$select=body`, undefined, "html").catch(() => null);
+  let c;
   try {
     const j = await api("GET", `/me/messages/${id(mid)}?$select=subject,body,toRecipients,ccRecipients,replyTo,hasAttachments,receivedDateTime`);
-    const c = {texto: (((j || {}).body || {}).content || "").replace(/^\s*Precaución:[\s\S]*?archivos adjuntos\.\s*/i, "").replace(/\r/g, "").replace(/\[cid:[^\]]*\]\s*/g, ""), para: [], adjuntos: [], fecha: (j || {}).receivedDateTime || "", a: direcciones((j || {}).toRecipients), cc: direcciones((j || {}).ccRecipients), responderA: direcciones((j || {}).replyTo)};
-    for (const r of ((j || {}).toRecipients || []).concat((j || {}).ccRecipients || [])) if (r.emailAddress && r.emailAddress.address) c.para.push(r.emailAddress.address);
-    if ((j || {}).hasAttachments) {
+    c = {texto: (((j || {}).body || {}).content || "").replace(/\r/g, "").replace(/\[cid:[^\]]*\]\s*/g, ""), para: [], adjuntos: [], pendienteAdjuntos: !!(j || {}).hasAttachments, fecha: (j || {}).receivedDateTime || "", a: direcciones((j || {}).toRecipients), cc: direcciones((j || {}).ccRecipients), responderA: direcciones((j || {}).replyTo)};
+    c.para = c.a.concat(c.cc);
+    c.texto = limpiarTexto(c.texto);
+    estado.cuerpos[mid] = c;
+  } catch (e) { estado.cuerpos[mid] = {error: e.message, texto: "", para: [], adjuntos: []}; repintarSi(mid); return; }
+  repintarSi(mid);
+  try {
+    if (c.pendienteAdjuntos) {
       const a = await api("GET", `/me/messages/${id(mid)}/attachments?$select=id,name,size,contentType,isInline,microsoft.graph.fileAttachment/contentId`);
       c.adjuntos = ((a || {}).value || []).filter((x) => x.name);
     }
-    c.texto = limpiarTexto(c.texto);
-    estado.cuerpos[mid] = c;
-    if (estado.sel === mid && !estado.redacta) pintarDetalle();
-    c.html = await cargarHtml(mid, c);
-    if (!estado.yo) { try { const yo = await api("GET", "/me?$select=mail,userPrincipalName"); estado.yo = ((yo || {}).mail || (yo || {}).userPrincipalName || "").toLowerCase(); } catch (e) {} }
-    if (estado.sel === mid && estado.redacta) return;
-  } catch (e) { estado.cuerpos[mid] = {error: e.message, texto: "", para: [], adjuntos: []}; }
-  if (estado.sel === mid) pintarDetalle();
+  } catch (e) {}
+  c.pendienteAdjuntos = false;
+  c.html = await cargarHtml(mid, c, await pHtml);
+  repintarSi(mid);
 }
 // El correo con su formato: el HTML tal cual llega y las imágenes incrustadas (cid:) como datos.
 // Se pinta en un marco aislado (lector.html); aquí no se interpreta nada.
-async function cargarHtml(mid, c) {
+async function cargarHtml(mid, c, j) {
   try {
-    const j = await api("GET", `/me/messages/${id(mid)}?$select=body`, undefined, "html");
     const cuerpo = (j || {}).body || {};
     if (cuerpo.contentType !== "html" || !cuerpo.content) return null;
     let html = cuerpo.content;
     if (html.length > 3000000) return null;
-    const dentro = c.adjuntos.filter((a) => a.contentId && /^image\/(png|jpe?g|gif|webp|bmp)$/i.test(a.contentType || "") && a.size <= 2000000).slice(0, 15);
-    for (const a of dentro) {
-      const cid = "cid:" + String(a.contentId).replace(/^<|>$/g, "");
-      if (!html.includes(cid)) continue;
-      const f = await api("GET", `/me/messages/${id(mid)}/attachments/${id(a.id)}`);
-      if (f && f.contentBytes) html = html.split(cid).join(`data:${a.contentType.toLowerCase()};base64,${f.contentBytes}`);
+    const dentro = c.adjuntos.filter((a) => a.contentId && /^image\/(png|jpe?g|gif|webp|bmp)$/i.test(a.contentType || "") && a.size <= 2000000 && html.includes("cid:" + String(a.contentId).replace(/^<|>$/g, ""))).slice(0, 15);
+    await Promise.all(dentro.map(async (a) => {
+      const f = await api("GET", `/me/messages/${id(mid)}/attachments/${id(a.id)}`).catch(() => null);
+      if (f && f.contentBytes) html = html.split("cid:" + String(a.contentId).replace(/^<|>$/g, "")).join(`data:${a.contentType.toLowerCase()};base64,${f.contentBytes}`);
       a.incrustado = true;
-    }
+    }));
     return html;
   } catch (e) { return null; }
+}
+// Mientras miras la lista, la app va trayendo los correos de fondo para que se abran al instante.
+let tandaPrecarga = 0;
+async function precargar() {
+  const tanda = ++tandaPrecarga;
+  const orden = [].concat(estado.datos[estado.tab] || [], todos()).map((m) => m.id).filter((x, k, l) => l.indexOf(x) === k).slice(0, 40);
+  const obrero = async () => {
+    while (orden.length && tanda === tandaPrecarga) {
+      const mid = orden.shift();
+      if (!estado.cuerpos[mid]) await cargarCorreo(mid).catch(() => {});
+    }
+  };
+  await obrero();
+}
+async function quienSoy() {
+  if (estado.yo) return;
+  try { const yo = await api("GET", "/me?$select=mail,userPrincipalName"); estado.yo = ((yo || {}).mail || (yo || {}).userPrincipalName || "").toLowerCase(); } catch (e) {}
 }
 let marco = null;
 window.addEventListener("message", (e) => {
@@ -325,7 +351,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html) {
-  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=15"});
+  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=16"});
   marco.html = html;
   return marco;
 }
