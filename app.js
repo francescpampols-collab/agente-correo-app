@@ -161,7 +161,7 @@ async function listarTodo() {
   const etiquetas = [CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual];
   const q = new URLSearchParams({
     "$filter": etiquetas.map((e) => `categories/any(c:c eq '${e}')`).join(" or "),
-    "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink",
+    "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments",
     "$expand": `singleValueExtendedProperties($filter=id eq '${PROP}' or id eq 'Integer 0x1081')`,
     "$top": "200",
   });
@@ -178,7 +178,7 @@ async function listarTodo() {
   // Lo recién llegado que el agente aún no ha clasificado: se enseña ya, sin esperar a su siguiente pasada.
   let nuevo = [];
   try {
-    const r = await api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink", "$orderby": "receivedDateTime desc", "$top": "50"}));
+    const r = await api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments", "$orderby": "receivedDateTime desc", "$top": "50"}));
     nuevo = (r.value || []).filter((m) => !(m.categories || []).some((c) => c.startsWith("Agente:")));
     nuevo.forEach((m) => { m.sinClasificar = true; });
   } catch (e) {}
@@ -361,6 +361,17 @@ function cargarCorreo(mid) {
   if (!enCurso.has(mid)) enCurso.set(mid, traerCorreo(mid).finally(() => enCurso.delete(mid)));
   return enCurso.get(mid);
 }
+let relojLista;
+function refrescarLista() {
+  clearTimeout(relojLista);
+  relojLista = setTimeout(() => {
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName)) { refrescarLista(); return; }
+    const y = $("lista").scrollTop;
+    pintar();
+    $("lista").scrollTop = y;
+  }, 500);
+}
 function repintarSi(mid) { if (estado.sel === mid && !estado.redacta) pintarDetalle(); }
 // Texto y formato se piden a la vez; el texto se enseña en cuanto llega y el formato lo sustituye después.
 async function traerCorreo(mid) {
@@ -384,6 +395,7 @@ async function traerCorreo(mid) {
     }
   } catch (e) {}
   c.pendienteAdjuntos = false;
+  if (c.adjuntos.some((a) => !a.isInline)) refrescarLista();
   c.html = await cargarHtml(mid, c, cuerpoHtml);
   repintarSi(mid);
 }
@@ -438,7 +450,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=29"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=30"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -497,6 +509,7 @@ function cartaRespuesta(m) {
     remitente(m),
     titulo(m),
     marcas(m),
+    filaAdjuntos(m),
     p.pide ? el("p", {class: "pide"}, "Pide: " + p.pide) : null,
     el("p", {class: "resp"}, p.respuesta || ""),
     destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
@@ -520,6 +533,19 @@ function cartaGrupo(g) {
       g.dir ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivarSiempre(g), ids, "Archivado. Lo nuevo de este remitente se archivará solo en cada pasada")}, "Archivar siempre") : null,
       el("button", {class: "plano peligro", type: "button", onclick: () => hacer(() => pedirBaja(g), ids, posible ? "La baja se tramita en la próxima pasada" : "Este boletín no admite baja automática: te aparecerá en Tuyos")}, "Dar de baja")));
 }
+// Adjuntos a la vista, en la lista y arriba del correo abierto: un toque y se descargan para abrirlos.
+function tamano(n) { return n > 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round((n || 0) / 1024)) + " KB"; }
+function filaAdjuntos(m) {
+  const c = estado.cuerpos[m.id];
+  if (c && !c.error && !c.pendienteAdjuntos) {
+    const lista = (c.adjuntos || []).filter((a) => !a.incrustado && !a.isInline);
+    if (!lista.length) return null;
+    return el("div", {class: "adjuntos"}, ...lista.map((a) => el("button", {class: "adjunto", type: "button", title: "Descargar y abrir", onclick: () => { avisar("Descargando " + a.name + "…"); hacer(() => descargar(m.id, a), [], "Descargado: " + a.name + ". Ábrelo desde el aviso de descargas."); }},
+      icono("clip"), el("span", {}, a.name), el("span", {class: "peso"}, tamano(a.size)))));
+  }
+  if (!m.hasAttachments) return null;
+  return el("div", {class: "adjuntos"}, el("button", {class: "adjunto", type: "button", onclick: () => { cargarCorreo(m.id).then(pintar); }}, icono("clip"), el("span", {}, c && c.error ? "Reintentar adjuntos" : "Cargando adjuntos…")));
+}
 // Lo que ya has hecho con un correo, a la vista en la lista y al abrirlo.
 const CAT_HECHO = {responder: "Respondido", todos: "Respondido", reenviar: "Reenviado"};
 const CAT_PUESTA = "Reacción puesta: ";
@@ -542,6 +568,7 @@ function cartaSimple(m) {
     remitente(m),
     titulo(m),
     marcas(m),
+    filaAdjuntos(m),
     p.pide ? el("p", {class: "pide"}, p.pide) : m.sinClasificar && extracto(m) ? el("p", {class: "pide"}, extracto(m).slice(0, 180)) : null,
     p.aviso ? el("span", {class: "aviso"}, p.aviso) : null,
     el("div", {class: "fila"},
@@ -609,6 +636,7 @@ const TRAZOS = {
   responder: "M10 7 4 13l6 6M4 13h9a7 7 0 0 1 7 7",
   todos: "M7 7 1 13l6 6M13 7l-6 6 6 6M7 13h8a6 6 0 0 1 6 6",
   reenviar: "M14 7l6 6-6 6M20 13h-9a7 7 0 0 0-7 7",
+  clip: "M20 11.5l-7.6 7.6a5 5 0 0 1-7.1-7.1l8-8a3.4 3.4 0 0 1 4.8 4.8l-7.9 7.9a1.8 1.8 0 0 1-2.5-2.5l7.2-7.2",
   reaccion: "M12 3.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19M8 15.5c1.1 1.5 2.4 2.2 4 2.2s2.9-.7 4-2.2M9 10.3v.9M15 10.3v.9",
 };
 function icono(nombre) {
@@ -1009,6 +1037,7 @@ function pintarDetalle() {
       c ? lineasDestino(c.a || [], c.cc || []) : null,
       c && c.fecha ? el("div", {class: "de"}, fechaLarga(c.fecha)) : null,
       marcas(m),
+      filaAdjuntos(m),
       barraOutlook(m),
       barraReacciones(m)),
     panelManual(m),
@@ -1022,7 +1051,6 @@ function pintarDetalle() {
         : c.html && !estado.soloTexto ? marcoCorreo(c.html)
         : el("div", {class: "hilo"}, ...hiloEnTexto(c.texto)),
       c && c.html ? el("button", {class: "enlace izquierda", type: "button", onclick: () => { estado.soloTexto = !estado.soloTexto; pintarDetalle(); }}, estado.soloTexto ? "Ver con formato e imágenes" : "Ver solo el texto") : null,
-      ...((c && c.adjuntos) || []).filter((a) => !a.incrustado).map((a) => el("button", {class: "plano adjunto", type: "button", onclick: () => hacer(() => descargar(m.id, a), [], "Descargado: " + a.name)}, "Adjunto: " + a.name)),
       outlook ? el("a", {href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null));
   if (esRespuesta) {
     const area = el("textarea", {id: "borrador", "aria-label": "Tu respuesta"});

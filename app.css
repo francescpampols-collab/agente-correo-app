@@ -81,7 +81,7 @@ button.enlace{color:var(--azul);font-size:15px;text-decoration:underline;overflo
 
 /* Lectura del correo */
 .cuerpo{margin:0;max-width:72ch;white-space:pre-wrap;overflow-wrap:anywhere;font-size:16px;line-height:1.55}
-.adjunto{text-align:left;padding:10px 14px;height:auto;overflow-wrap:anywhere}
+
 textarea{width:100%;min-height:220px;resize:vertical;border:1px solid var(--linea);border-radius:10px;padding:14px;background:var(--papel);line-height:1.5}
 input[type=text]{width:100%;min-height:46px;border:1px solid var(--linea);border-radius:8px;padding:0 12px;background:var(--papel)}
 
@@ -202,3 +202,10 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .sugerencia:hover{background:#EEF3F8}
 .sugerencia b{font-size:15px;font-weight:600;color:var(--marino)}
 .sugerencia span{font-size:13px;color:var(--gris);overflow-wrap:anywhere}
+/* Adjuntos a la vista */
+.adjuntos{display:flex;flex-wrap:wrap;gap:6px}
+.adjunto{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:40px;padding:4px 12px 4px 8px;border:1px solid var(--linea);border-radius:8px;background:#F3F6F9;color:var(--marino);font-size:14px;font-weight:500;text-align:left;cursor:pointer}
+.adjunto:hover{border-color:var(--azul);background:#E3ECF6}
+.adjunto .icono{width:18px;height:20px;flex:none;color:var(--azul)}
+.adjunto span{overflow-wrap:anywhere}
+.adjunto .peso{color:var(--gris);font-weight:400;font-size:12px;white-space:nowrap}
