@@ -102,7 +102,14 @@ async function token() {
 async function api(metodo, ruta, cuerpo, tipoCuerpo) {
   const cab = {Authorization: "Bearer " + await token(), Prefer: `IdType="ImmutableId", outlook.body-content-type="${tipoCuerpo || "text"}"`};
   if (cuerpo !== undefined) cab["Content-Type"] = "application/json";
-  const r = await fetch(GRAPH + ruta, {method: metodo, headers: cab, body: cuerpo !== undefined ? JSON.stringify(cuerpo) : undefined});
+  let r;
+  // Outlook admite pocas peticiones a la vez por buzón: si pide esperar, se espera y se repite.
+  for (let intento = 0; ; intento++) {
+    r = await fetch(GRAPH + ruta, {method: metodo, headers: cab, body: cuerpo !== undefined ? JSON.stringify(cuerpo) : undefined});
+    if ((r.status !== 429 && r.status !== 503) || intento >= 4) break;
+    const espera = Math.min(Number(r.headers && r.headers.get && r.headers.get("Retry-After")) || 2 * (intento + 1), 15);
+    await new Promise((ok) => setTimeout(ok, espera * 1000));
+  }
   if (r.status === 401) { borrar("agente.tok"); await entrar(); return new Promise(() => {}); }
   if (!r.ok) throw new Error(`Outlook ha respondido ${r.status}`);
   return r.status === 204 || r.status === 202 ? null : r.json().catch(() => null);
@@ -110,20 +117,22 @@ async function api(metodo, ruta, cuerpo, tipoCuerpo) {
 const id = (x) => encodeURIComponent(x);
 
 // ---------- datos ----------
-async function listar(cat) {
+async function listarTodo() {
+  const etiquetas = [CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual];
   const q = new URLSearchParams({
-    "$filter": `categories/any(c:c eq '${cat}')`,
+    "$filter": `categories/any(c:${etiquetas.map((e) => `c eq '${e}'`).join(" or ")})`,
     "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink",
     "$expand": `singleValueExtendedProperties($filter=id eq '${PROP}')`,
-    "$top": "100",
+    "$top": "200",
   });
   const j = await api("GET", "/me/mailFolders/inbox/messages?" + q);
   const lista = (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
   await completar(lista);
-  return lista;
+  const de = (e) => lista.filter((m) => (m.categories || []).includes(e));
+  return {resp: de(CAT.resp), news: de(CAT.news), arch: de(CAT.arch), pend: de(CAT.pend).concat(de(CAT.manual))};
 }
 // En los listados Outlook corta la propiedad a 255 caracteres. Las que llegan
-// cortadas se vuelven a pedir enteras, de veinte en veinte.
+// cortadas se vuelven a pedir enteras, de cuatro en cuatro (el tope de Outlook).
 async function completar(lista) {
   const cortadas = lista.filter((m) => {
     const v = ((m.singleValueExtendedProperties || [])[0] || {}).value || "";
@@ -131,8 +140,8 @@ async function completar(lista) {
     try { JSON.parse(v); return false; } catch (e) { return true; }
   });
   const exp = encodeURIComponent(`singleValueExtendedProperties($filter=id eq '${PROP}')`);
-  for (let i = 0; i < cortadas.length; i += 20) {
-    const grupo = cortadas.slice(i, i + 20);
+  for (let i = 0; i < cortadas.length; i += 4) {
+    const grupo = cortadas.slice(i, i + 4);
     const r = await api("POST", "/$batch", {requests: grupo.map((m, k) => ({id: String(k), method: "GET", url: `/me/messages/${id(m.id)}?$select=id&$expand=${exp}`, headers: {Prefer: 'IdType="ImmutableId"'}}))});
     for (const x of (r && r.responses) || []) {
       const m = grupo[Number(x.id)];
@@ -156,9 +165,8 @@ async function guardarLista(lista) {
 async function cargar() {
   $("recargar").disabled = true;
   try {
-    const [resp, news, arch, pend, manual, lista] = await Promise.all([CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual].map(listar).concat(leerLista()));
-    estado.datos = {resp, news, arch, pend: pend.concat(manual)};
-    estado.lista = lista;
+    estado.datos = await listarTodo();
+    estado.lista = await leerLista();
     if (estado.sel && !todos().some((m) => m.id === estado.sel)) cerrar();
   } catch (e) { avisar("No se ha podido leer el buzón: " + e.message); }
   $("recargar").disabled = false;
