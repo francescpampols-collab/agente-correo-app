@@ -185,3 +185,20 @@ a.accion{text-decoration:none}
 .marca.cola{background:var(--ambar-fondo);color:var(--ambar)}
 .destino{display:flex;flex-direction:column;gap:2px}
 nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
+/* Destinatarios como en Outlook */
+.destinos{display:flex;flex-direction:column;gap:8px}
+.campo-caja{flex:1;min-width:0;position:relative}
+.campo-caja .fichas{flex:none}
+.fichas.soltar{border-color:var(--azul);background:#EEF3F8}
+.ficha{cursor:grab;padding:0}
+.ficha .ficha-txt{border:0;background:none;color:inherit;font:inherit;font-size:14px;line-height:1.2;padding:0 2px 0 10px;min-height:34px;min-width:0;text-align:left;overflow-wrap:anywhere;cursor:pointer}
+.ficha .ficha-x{min-width:32px}
+.ficha.abierta{box-shadow:inset 0 0 0 2px var(--azul)}
+.ficha-menu{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center}
+.ficha-menu .plano{min-height:34px;font-size:13px;padding:0 10px}
+.sugerencias{position:absolute;left:0;right:0;top:100%;z-index:4;margin-top:4px;background:var(--papel);border:1px solid var(--linea);border-radius:8px;box-shadow:0 6px 18px rgba(18,53,91,.18);overflow:hidden}
+.sugerencia{display:flex;flex-direction:column;gap:1px;width:100%;min-height:48px;padding:6px 12px;border:0;border-bottom:1px solid var(--linea);background:none;text-align:left;cursor:pointer}
+.sugerencia:last-child{border-bottom:0}
+.sugerencia:hover{background:#EEF3F8}
+.sugerencia b{font-size:15px;font-weight:600;color:var(--marino)}
+.sugerencia span{font-size:13px;color:var(--gris);overflow-wrap:anywhere}

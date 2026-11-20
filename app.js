@@ -19,7 +19,7 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
+const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -241,7 +241,7 @@ async function cargar() {
   } catch (e) { avisar("No se ha podido leer el buzón: " + e.message); }
   $("recargar").disabled = false;
   pintar();
-  quienSoy().then(precargar);
+  quienSoy().then(precargar).then(cargarContactos);
 }
 function todos() { return [].concat(estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
 function quitar(ids) {
@@ -432,7 +432,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=27"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=28"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -726,7 +726,7 @@ async function pedirPropuesta(m, guia) {
 async function pedirTest(m, anterior, destino) {
   const x = estado.propuestas[m.id] = Object.assign(estado.propuestas[m.id] || {}, {fase: "cargando", error: null});
   if (anterior) x.texto = anterior;
-  if (destino) x.destino = {modo: destino.modo, para: destino.para.slice(), cc: destino.cc.slice()};
+  if (destino) x.destino = {modo: destino.modo, para: destino.para.slice(), cc: destino.cc.slice(), cco: (destino.cco || []).slice()};
   repintarSi(m.id);
   try {
     const sistema = `Francesc Pampols, administrador de Grup PAMPOLS, tiene que contestar un correo y la respuesta propuesta no le convence. Prepara un test de exactamente 5 preguntas que, contestadas, definan la respuesta: las decisiones concretas que plantea este correo (aceptar o no, plazos, quién se encarga, qué pedir a cambio, a quién contestar, tono). Nada genérico. Cada pregunta con entre 2 y 4 opciones cortas (máximo 9 palabras), distintas entre sí y realistas para este caso. En castellano. ${AVISO_IA}\nDevuelve solo JSON válido con esta forma: {"preguntas":[{"pregunta":"…","opciones":["…","…"]}]}`;
@@ -773,13 +773,12 @@ function bloquePropuesta(m, esRespuesta) {
     const modo = x.todos ? "todos" : "responder";
     x.destino = Object.assign({modo}, destinatariosIniciales(m, modo));
   }
-  const r = () => ({mid: m.id, modo: x.destino.modo, texto: x.texto, idea: "", para: x.destino.para.slice(), cc: x.destino.cc.slice()});
+  const r = () => ({mid: m.id, modo: x.destino.modo, texto: x.texto, idea: "", para: x.destino.para.slice(), cc: x.destino.cc.slice(), cco: (x.destino.cco || []).slice()});
   const cambiar = () => { const modo = x.destino.modo === "todos" ? "responder" : "todos"; x.destino = Object.assign({modo}, destinatariosIniciales(m, modo)); pintarDetalle(); };
   const falta = /\[FALTA/i.test(x.texto);
   return el("div", {class: "carta propuesta"},
     el("span", {class: "eti"}, "Propuesta de respuesta (" + x.modelo + ")"),
-    campoDirecciones("Para", x.destino.para, "ppara"),
-    campoDirecciones("CC", x.destino.cc, "pcc"),
+    camposDestino(x.destino, "p"),
     el("button", {class: "enlace izquierda", type: "button", onclick: cambiar}, x.destino.modo === "todos" ? "Responder solo al remitente" : "Responder a todos (incluye a los que estaban en copia)"),
     el("p", {class: "cuerpo"}, x.texto),
     falta ? el("span", {class: "aviso"}, "Tiene huecos [FALTA: …]: edítala para completarlos") : null,
@@ -824,36 +823,115 @@ function destinatariosIniciales(m, modo) {
   const para = unicos(origen.concat((c.a || []).filter(noYo)));
   return {para, cc: unicos((c.cc || []).filter(noYo)).filter((x) => !para.some((p) => p.toLowerCase() === x.toLowerCase()))};
 }
-function campoDirecciones(etiqueta, lista, idCampo) {
-  const campo = el("input", {type: "text", id: idCampo, inputmode: "email", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "Añadir dirección", "aria-label": "Añadir a " + etiqueta});
-  const anadir = (enfocar) => {
-    const trozos = campo.value.split(/[,;\s]+/).filter(Boolean);
-    if (!trozos.length) return;
-    const malas = trozos.filter((x) => !CORREO.test(x));
-    if (malas.length) { avisar("Dirección no válida: " + malas[0]); return; }
-    for (const x of trozos) if (!lista.some((y) => y.toLowerCase() === x.toLowerCase())) lista.push(x);
-    pintarDetalle();
-    if (enfocar) { const otro = $(idCampo); if (otro) otro.focus(); }
+// Agenda para el autocompletado: sale de tus propios correos (a quién escribes y quién te escribe),
+// ordenada por frecuencia. Se guarda en el dispositivo; «Salir» la borra.
+async function cargarContactos() {
+  if (estado.contactos) return;
+  estado.contactos = leer("agente.contactos") || [];
+  const cuenta = new Map();
+  const sumar = (e, peso) => {
+    const a = ((e || {}).address || "").trim();
+    if (!CORREO.test(a) || a.toLowerCase() === estado.yo) return;
+    const k = a.toLowerCase(), x = cuenta.get(k) || {a, n: "", peso: 0};
+    x.peso += peso;
+    if (!x.n && e.name && e.name.toLowerCase() !== k) x.n = e.name;
+    cuenta.set(k, x);
   };
-  campo.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "," || e.key === ";") { e.preventDefault(); anadir(true); } });
-  campo.addEventListener("blur", () => anadir(false));
-  return el("div", {class: "campo"},
-    el("span", {class: "campo-eti"}, etiqueta),
-    el("div", {class: "fichas"},
-      ...lista.map((x) => el("span", {class: "ficha"}, x, el("button", {type: "button", "aria-label": "Quitar " + x, onclick: () => { lista.splice(lista.indexOf(x), 1); pintarDetalle(); }}, "×"))),
-      campo));
+  try {
+    const env = await api("GET", "/me/mailFolders/sentitems/messages?" + new URLSearchParams({"$select": "toRecipients,ccRecipients", "$orderby": "sentDateTime desc", "$top": "250"}));
+    for (const m of env.value || []) for (const r of (m.toRecipients || []).concat(m.ccRecipients || [])) sumar(r.emailAddress, 3);
+    const rec = await api("GET", "/me/messages?" + new URLSearchParams({"$select": "from,toRecipients,ccRecipients", "$orderby": "receivedDateTime desc", "$top": "250"}));
+    for (const m of rec.value || []) { sumar((m.from || {}).emailAddress, 2); for (const r of (m.toRecipients || []).concat(m.ccRecipients || [])) sumar(r.emailAddress, 1); }
+    if (cuenta.size) { estado.contactos = Array.from(cuenta.values()).sort((x, y) => y.peso - x.peso).slice(0, 600); guardar("agente.contactos", estado.contactos); }
+  } catch (e) {}
+}
+function sugerir(texto, yaPuestos) {
+  const t = texto.trim().toLowerCase();
+  if (t.length < 2) return [];
+  const sin = (x) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const b = sin(t);
+  return (estado.contactos || []).filter((c) => !yaPuestos.has(c.a.toLowerCase()) && (sin(c.n).includes(b) || c.a.toLowerCase().includes(b)))
+    .sort((x, y) => (sin(y.n).startsWith(b) || y.a.toLowerCase().startsWith(b) ? 1 : 0) - (sin(x.n).startsWith(b) || x.a.toLowerCase().startsWith(b) ? 1 : 0) || y.peso - x.peso).slice(0, 6);
+}
+// Para, CC y CCO como en Outlook: fichas que se quitan, se añaden con sugerencias al escribir
+// y se mueven de un campo a otro (arrastrando en el PC; tocando la ficha en el móvil).
+const CAMPOS = [["para", "Para"], ["cc", "CC"], ["cco", "CCO"]];
+function camposDestino(d, pref) {
+  for (const [k] of CAMPOS) if (!Array.isArray(d[k])) d[k] = [];
+  const repintar = (foco) => { pintarDetalle(); if (foco) { const c = $(pref + foco); if (c) c.focus(); } };
+  const puestos = () => new Set(d.para.concat(d.cc, d.cco).map((x) => x.toLowerCase()));
+  const mover = (dir0, desde, hasta) => {
+    const i = d[desde].findIndex((x) => x.toLowerCase() === dir0.toLowerCase());
+    if (i < 0 || desde === hasta) return;
+    d[desde].splice(i, 1);
+    if (hasta && !d[hasta].some((x) => x.toLowerCase() === dir0.toLowerCase())) d[hasta].push(dir0);
+    estado.fichaAbierta = null;
+    repintar();
+  };
+  const fila = ([k, etiqueta]) => {
+    const campo = el("input", {type: "text", id: pref + k, inputmode: "email", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "Nombre o dirección", "aria-label": "Añadir a " + etiqueta});
+    const lista = el("div", {class: "sugerencias oculto"});
+    const poner1 = (a) => { if (!puestos().has(a.toLowerCase())) d[k].push(a); repintar(k); };
+    const anadirEscrito = (avisarSiMal) => {
+      const trozos = campo.value.split(/[,;\s]+/).filter(Boolean);
+      if (!trozos.length) return false;
+      if (!trozos.every((x) => CORREO.test(x))) { if (avisarSiMal) avisar("Elige un contacto de la lista o escribe la dirección completa"); return false; }
+      for (const x of trozos) if (!puestos().has(x.toLowerCase())) d[k].push(x);
+      return true;
+    };
+    const pintarSugerencias = () => {
+      const s = sugerir(campo.value, puestos());
+      lista.classList.toggle("oculto", !s.length);
+      lista.replaceChildren(...s.map((c) => {
+        const b = el("button", {class: "sugerencia", type: "button"}, c.n ? el("b", {}, c.n) : null, el("span", {}, c.a));
+        b.addEventListener("pointerdown", (e) => e.preventDefault());
+        b.addEventListener("click", () => poner1(c.a));
+        return b;
+      }));
+    };
+    campo.addEventListener("input", pintarSugerencias);
+    campo.addEventListener("focus", () => { cargarContactos().then(pintarSugerencias); });
+    campo.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== "," && e.key !== ";") return;
+      e.preventDefault();
+      const s = sugerir(campo.value, puestos());
+      if (e.key === "Enter" && s.length && !CORREO.test(campo.value.trim())) { poner1(s[0].a); return; }
+      if (anadirEscrito(true)) repintar(k);
+    });
+    campo.addEventListener("blur", () => { setTimeout(() => lista.classList.add("oculto"), 150); if (anadirEscrito(false)) repintar(); });
+    const zona = el("div", {class: "fichas"},
+      ...d[k].map((x) => {
+        const abierta = estado.fichaAbierta === pref + k + "|" + x;
+        const ficha = el("span", {class: "ficha" + (abierta ? " abierta" : ""), draggable: "true"},
+          el("button", {class: "ficha-txt", type: "button", "aria-expanded": abierta ? "true" : "false", title: "Mover a otro campo", onclick: () => { estado.fichaAbierta = abierta ? null : pref + k + "|" + x; repintar(); }}, x),
+          el("button", {class: "ficha-x", type: "button", "aria-label": "Quitar " + x, onclick: () => mover(x, k, null)}, "×"));
+        ficha.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", k + "|" + x); e.dataTransfer.effectAllowed = "move"; });
+        return abierta ? el("span", {class: "ficha-menu"}, ficha, ...CAMPOS.filter(([o]) => o !== k).map(([o, t]) => el("button", {class: "plano corto", type: "button", onclick: () => mover(x, k, o)}, "Mover a " + t))) : ficha;
+      }),
+      campo);
+    zona.addEventListener("dragover", (e) => { e.preventDefault(); zona.classList.add("soltar"); });
+    zona.addEventListener("dragleave", () => zona.classList.remove("soltar"));
+    zona.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zona.classList.remove("soltar");
+      const [desde, ...resto] = String(e.dataTransfer.getData("text/plain")).split("|");
+      if (CAMPOS.some(([o]) => o === desde) && resto.length) mover(resto.join("|"), desde, k);
+    });
+    return el("div", {class: "campo"}, el("span", {class: "campo-eti"}, etiqueta), el("div", {class: "campo-caja"}, zona, lista));
+  };
+  return el("div", {class: "destinos"}, ...CAMPOS.map(fila));
 }
 // Outlook crea el mensaje (con el hilo y, al reenviar, los adjuntos) y se envía a quien haya quedado elegido.
 async function enviarManual(m, r, archivarDespues) {
   if (!r.texto.trim()) throw new Error("escribe el mensaje antes de enviar");
   if (/\[FALTA/i.test(r.texto)) throw new Error("completa los huecos [FALTA: …]");
   if (!r.para.length) throw new Error("pon al menos un destinatario en «Para»");
-  if (!r.para.concat(r.cc).every((x) => CORREO.test(x))) throw new Error("revisa las direcciones");
+  if (!r.para.concat(r.cc, r.cco || []).every((x) => CORREO.test(x))) throw new Error("revisa las direcciones");
   const nuevo = await api("POST", `/me/messages/${id(m.id)}/${MODOS[r.modo][0]}`, undefined, "html");
   const aLista = (l) => l.map((x) => ({emailAddress: {address: x}}));
   await api("PATCH", `/me/messages/${id(nuevo.id)}`, {
     body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(r.texto))},
-    toRecipients: aLista(r.para), ccRecipients: aLista(r.cc)});
+    toRecipients: aLista(r.para), ccRecipients: aLista(r.cc), bccRecipients: aLista(r.cco || [])});
   await api("POST", `/me/messages/${id(nuevo.id)}/send`);
   if (estado.redacta && estado.redacta.mid === m.id) estado.redacta = null;
   delete estado.propuestas[m.id];
@@ -891,8 +969,7 @@ function panelManual(m) {
   idea.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); redactar(); } });
   return el("div", {class: "carta redaccion"},
     el("span", {class: "eti"}, MODOS[r.modo][1]),
-    campoDirecciones("Para", r.para, "para"),
-    campoDirecciones("CC", r.cc, "cc"),
+    camposDestino(r, ""),
     hayIA ? el("div", {class: "ia"},
       el("label", {}, "Dile a la IA qué quieres contestar", idea),
       el("button", {class: "lleno corto", type: "button", onclick: redactar}, r.texto.trim() ? "Mejorar con IA" : "Redactar con IA"),
@@ -1037,6 +1114,7 @@ function salir() {
   borrar("agente.ia");
   clearTimeout(relojTrabajo);
   borrar("agente.trabajo");
+  borrar("agente.contactos");
   Object.assign(estado, {propuestas: {}, resumenes: {}, editados: {}, redacta: null});
   guardar("agente.salio", true);
   estado.datos = {nuevo: [], resp: [], news: [], arch: [], pend: []};
