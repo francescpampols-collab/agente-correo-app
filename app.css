@@ -160,7 +160,12 @@ button.enlace.izquierda{align-self:flex-start;background:none;border:0;padding:0
 .resumen{display:flex;flex-direction:column;gap:6px}
 .resumen b{color:var(--marino);font-weight:600}
 
-/* Respuestas de un toque */
-.rapidas{display:flex;gap:6px;justify-content:space-between;max-width:420px}
-.rapida{flex:1 1 0;min-height:46px;border:1px solid var(--linea);border-radius:999px;background:var(--papel);font-size:22px;line-height:1;cursor:pointer;font-family:"Segoe UI Emoji","Noto Color Emoji","Apple Color Emoji",sans-serif}
-.rapida:hover{background:#EEF3F8;border-color:var(--azul)}
+/* Propuesta de respuesta y test */
+.propuesta{border-top:4px solid var(--kraft)}
+.propuesta>.cuerpo{background:#F6F8FA;border:1px solid var(--linea);border-radius:8px;padding:12px 14px;max-width:none}
+.pregunta{display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--linea)}
+.pregunta b{color:var(--marino)}
+.opciones{display:flex;flex-wrap:wrap;gap:6px}
+.opcion{min-height:44px;padding:6px 14px;border:1px solid var(--linea);border-radius:8px;background:var(--papel);color:var(--tinta);font-size:15px;font-weight:500;text-align:left;cursor:pointer}
+.opcion.activa{background:var(--marino);border-color:var(--marino);color:#fff}
+a.accion{text-decoration:none}

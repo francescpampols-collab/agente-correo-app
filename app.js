@@ -18,7 +18,7 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, redacta: null, yo: null, estilo: null, pideClave: false};
+const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -271,7 +271,7 @@ function abrir(mid) {
   estado.sel = mid;
   document.body.classList.add("viendo");
   pintar();
-  cargarCorreo(mid);
+  cargarCorreo(mid).then(() => propuestaAutomatica(mid));
 }
 // Trae el correo entero (texto y lista de adjuntos) para leerlo dentro de la app.
 function direcciones(lista) {
@@ -296,32 +296,38 @@ async function traerCorreo(mid) {
     estado.cuerpos[mid] = c;
   } catch (e) { estado.cuerpos[mid] = {error: e.message, texto: "", para: [], adjuntos: []}; repintarSi(mid); return; }
   repintarSi(mid);
+  const jHtml = await pHtml;
+  const cuerpoHtml = ((jHtml || {}).body || {}).contentType === "html" ? jHtml.body.content || "" : "";
+  // Outlook no cuenta las imágenes incrustadas como adjuntos: si el correo las cita (cid:), hay que pedirlas igual.
   try {
-    if (c.pendienteAdjuntos) {
-      const a = await api("GET", `/me/messages/${id(mid)}/attachments?$select=id,name,size,contentType,isInline,microsoft.graph.fileAttachment/contentId`);
+    if (c.pendienteAdjuntos || /cid:/i.test(cuerpoHtml)) {
+      const a = await api("GET", `/me/messages/${id(mid)}/attachments?$select=id,name,size,contentType,isInline`);
       c.adjuntos = ((a || {}).value || []).filter((x) => x.name);
     }
   } catch (e) {}
   c.pendienteAdjuntos = false;
-  c.html = await cargarHtml(mid, c, await pHtml);
+  c.html = await cargarHtml(mid, c, cuerpoHtml);
   repintarSi(mid);
 }
 // El correo con su formato: el HTML tal cual llega y las imágenes incrustadas (cid:) como datos.
 // Se pinta en un marco aislado (lector.html); aquí no se interpreta nada.
-async function cargarHtml(mid, c, j) {
+async function cargarHtml(mid, c, html) {
   try {
-    const cuerpo = (j || {}).body || {};
-    if (cuerpo.contentType !== "html" || !cuerpo.content) return null;
-    let html = cuerpo.content;
-    if (html.length > 3000000) return null;
-    const dentro = c.adjuntos.filter((a) => a.contentId && /^image\/(png|jpe?g|gif|webp|bmp)$/i.test(a.contentType || "") && a.size <= 2000000 && html.includes("cid:" + String(a.contentId).replace(/^<|>$/g, ""))).slice(0, 15);
-    await Promise.all(dentro.map(async (a) => {
-      const f = await api("GET", `/me/messages/${id(mid)}/attachments/${id(a.id)}`).catch(() => null);
-      if (f && f.contentBytes) html = html.split("cid:" + String(a.contentId).replace(/^<|>$/g, "")).join(`data:${a.contentType.toLowerCase()};base64,${f.contentBytes}`);
-      a.incrustado = true;
-    }));
+    if (!html || html.length > 3000000) return null;
+    if (!/cid:/i.test(html)) return html;
+    const dentro = c.adjuntos.filter((a) => (a.isInline || /^image\//i.test(a.contentType || "")) && a.size <= 2500000).slice(0, 20);
+    for (let k = 0; k < dentro.length; k += 3) {
+      await Promise.all(dentro.slice(k, k + 3).map(async (a) => {
+        const f = await api("GET", `/me/messages/${id(mid)}/attachments/${id(a.id)}`).catch(() => null);
+        const cid = f && f.contentId ? "cid:" + String(f.contentId).replace(/^<|>$/g, "") : null;
+        const tipo = String((f && f.contentType) || a.contentType || "").toLowerCase();
+        if (!cid || !f.contentBytes || !html.includes(cid) || !/^image\/(png|jpe?g|gif|webp|bmp)$/.test(tipo)) return;
+        html = html.split(cid).join(`data:${tipo};base64,${f.contentBytes}`);
+        a.incrustado = true;
+      }));
+    }
     return html;
-  } catch (e) { return null; }
+  } catch (e) { return html || null; }
 }
 // Mientras miras la lista, la app va trayendo los correos de fondo para que se abran al instante.
 let tandaPrecarga = 0;
@@ -351,7 +357,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html) {
-  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=17"});
+  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=18"});
   marco.html = html;
   return marco;
 }
@@ -382,7 +388,7 @@ function bloqueResumen(m, p, c) {
       }))
       : p.pide ? el("p", {class: "pide normal"}, p.pide) : el("p", {class: "pide"}, "Sin resumen todavía."),
     !largo && c && !c.error && leer("agente.ia") ? el("button", {class: "enlace izquierda", type: "button", onclick: pedir}, "Resumir a fondo con IA") : null,
-    !largo && !leer("agente.ia") && !(estado.redacta && estado.redacta.mid === m.id) ? activarIA() : null);
+    estado.pideClave && !leer("agente.ia") && !(estado.redacta && estado.redacta.mid === m.id) ? activarIA() : null);
 }
 function fechaLarga(iso) {
   const f = new Date(iso);
@@ -494,6 +500,7 @@ const TRAZOS = {
   responder: "M10 7 4 13l6 6M4 13h9a7 7 0 0 1 7 7",
   todos: "M7 7 1 13l6 6M13 7l-6 6 6 6M7 13h8a6 6 0 0 1 6 6",
   reenviar: "M14 7l6 6-6 6M20 13h-9a7 7 0 0 0-7 7",
+  reaccion: "M12 3.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19M8 15.5c1.1 1.5 2.4 2.2 4 2.2s2.9-.7 4-2.2M9 10.3v.9M15 10.3v.9",
 };
 function icono(nombre) {
   const NS = "http://www.w3.org/2000/svg";
@@ -556,6 +563,78 @@ async function resumirIA(m) {
   const res = await ia(sistema, correoParaIA(m), 1500);
   estado.resumenes[m.id] = res;
 }
+// Propuesta de respuesta para cualquier correo, y un test de cinco preguntas para afinarla.
+function partirPropuesta(t) {
+  const k = /^\s*PARA:\s*(remitente|todos)\s*\n/i.exec(t);
+  return {todos: !!k && k[1].toLowerCase() === "todos", texto: (k ? t.slice(k[0].length) : t).trim()};
+}
+async function pedirPropuesta(m, guia) {
+  const x = estado.propuestas[m.id] = Object.assign(estado.propuestas[m.id] || {}, {fase: "cargando", error: null});
+  repintarSi(m.id);
+  try {
+    const sistema = `Preparas la respuesta a un correo en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él la revise y la envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\nPropón siempre una respuesta, aunque sea un acuse breve. No inventes datos, importes, fechas ni compromisos: si falta algo que solo Francesc sabe, escribe [FALTA: qué dato] en su sitio.\nFormato de salida: la primera línea es exactamente «PARA: remitente» o «PARA: todos» (todos solo si los demás destinatarios necesitan leer la respuesta). A continuación, solo el texto del correo, sin asunto ni explicaciones.`;
+    const usuario = (guia ? `Francesc ha contestado este test para definir la respuesta; respétalo punto por punto:\n${guia}\n\n` : "") + correoParaIA(m);
+    const res = await ia(sistema, usuario, 3000);
+    Object.assign(x, partirPropuesta(res.texto), {fase: "lista", modelo: res.modelo});
+  } catch (e) { x.fase = "error"; x.error = e.message; }
+  repintarSi(m.id);
+}
+async function pedirTest(m, anterior) {
+  const x = estado.propuestas[m.id] = Object.assign(estado.propuestas[m.id] || {}, {fase: "cargando", error: null});
+  if (anterior && !x.texto) x.texto = anterior;
+  repintarSi(m.id);
+  try {
+    const sistema = `Francesc Pampols, administrador de Grup PAMPOLS, tiene que contestar un correo y la respuesta propuesta no le convence. Prepara un test de exactamente 5 preguntas que, contestadas, definan la respuesta: las decisiones concretas que plantea este correo (aceptar o no, plazos, quién se encarga, qué pedir a cambio, a quién contestar, tono). Nada genérico. Cada pregunta con entre 2 y 4 opciones cortas (máximo 9 palabras), distintas entre sí y realistas para este caso. En castellano. ${AVISO_IA}\nDevuelve solo JSON válido con esta forma: {"preguntas":[{"pregunta":"…","opciones":["…","…"]}]}`;
+    const res = await ia(sistema, (x.texto ? `Respuesta propuesta que no le convence:\n${x.texto}\n\n` : "") + correoParaIA(m), 2000);
+    const j = JSON.parse(res.texto.slice(res.texto.indexOf("{"), res.texto.lastIndexOf("}") + 1));
+    const preguntas = (j.preguntas || []).filter((q) => q && typeof q.pregunta === "string" && Array.isArray(q.opciones)).slice(0, 5)
+      .map((q) => ({pregunta: q.pregunta.slice(0, 200), opciones: q.opciones.filter((o) => typeof o === "string" && o.trim()).slice(0, 4).map((o) => o.slice(0, 90))})).filter((q) => q.opciones.length >= 2);
+    if (!preguntas.length) throw new Error("la IA no ha devuelto preguntas");
+    Object.assign(x, {fase: "test", preguntas, elegidas: {}, extra: ""});
+  } catch (e) { x.fase = x.texto ? "lista" : "error"; x.error = e.message; avisar("No se ha podido preparar el test: " + e.message); }
+  repintarSi(m.id);
+}
+function propuestaAutomatica(mid) {
+  const m = todos().find((x) => x.id === mid), c = estado.cuerpos[mid];
+  if (!m || !c || c.error || !leer("agente.ia") || estado.sel !== mid || estado.propuestas[mid]) return;
+  if (estado.datos.news.includes(m) || estado.datos.resp.includes(m)) return;
+  pedirPropuesta(m);
+}
+function bloquePropuesta(m, esRespuesta) {
+  const x = estado.propuestas[m.id];
+  if (estado.datos.news.includes(m) || (esRespuesta && !x)) return null;
+  if (estado.redacta && estado.redacta.mid === m.id) return null;
+  if (!leer("agente.ia")) return estado.pideClave ? null : el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "Con la IA activada, cada correo se abre con una respuesta ya preparada."), activarIA());
+  if (!x || x.fase === "cargando") return el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "La IA está preparando la respuesta…"));
+  if (x.fase === "error") return el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "No se ha podido preparar: " + x.error), el("button", {class: "plano izquierda", type: "button", onclick: () => pedirPropuesta(m)}, "Reintentar"));
+  if (x.fase === "test") {
+    const elegir = (k, o) => { x.elegidas[k] = x.elegidas[k] === o ? undefined : o; pintarDetalle(); const t = document.querySelector(".test"); if (t) t.scrollIntoView({block: "nearest"}); };
+    const extra = el("input", {type: "text", id: "extra", autocomplete: "off", placeholder: "Opcional"});
+    extra.value = x.extra || "";
+    extra.addEventListener("input", () => { x.extra = extra.value; });
+    const guia = () => x.preguntas.map((q, k) => x.elegidas[k] ? `- ${q.pregunta} → ${x.elegidas[k]}` : null).filter(Boolean).concat(x.extra && x.extra.trim() ? ["- Además: " + x.extra.trim()] : []).join("\n");
+    return el("div", {class: "carta propuesta test"},
+      el("span", {class: "eti"}, "Define la respuesta"),
+      ...x.preguntas.map((q, k) => el("div", {class: "pregunta"},
+        el("p", {class: "pide normal"}, el("b", {}, (k + 1) + ". "), q.pregunta),
+        el("div", {class: "opciones"}, ...q.opciones.map((o) => el("button", {class: "opcion" + (x.elegidas[k] === o ? " activa" : ""), type: "button", "aria-pressed": x.elegidas[k] === o ? "true" : "false", onclick: () => elegir(k, o)}, o))))),
+      el("label", {}, "Algo más que deba decir", extra),
+      el("div", {class: "fila"},
+        el("button", {class: "plano", type: "button", onclick: () => { x.fase = x.texto ? "lista" : "error"; pintarDetalle(); }}, "Volver"),
+        el("button", {class: "lleno", type: "button", onclick: () => { const g = guia(); if (!g) { avisar("Contesta al menos una pregunta"); return; } pedirPropuesta(m, g); }}, "Redactar con mis respuestas")));
+  }
+  const r = () => Object.assign({mid: m.id, modo: x.todos ? "todos" : "responder", texto: x.texto, idea: ""}, destinatariosIniciales(m, x.todos ? "todos" : "responder"));
+  const falta = /\[FALTA/i.test(x.texto);
+  return el("div", {class: "carta propuesta"},
+    el("span", {class: "eti"}, "Propuesta de respuesta (" + x.modelo + ")"),
+    el("p", {class: "cuerpo"}, x.texto),
+    el("span", {class: "de"}, "Para: " + (r().para.concat(r().cc).join(", ") || "sin destinatario")),
+    falta ? el("span", {class: "aviso"}, "Tiene huecos [FALTA: …]: edítala para completarlos") : null,
+    el("div", {class: "fila"},
+      el("button", {class: "plano", type: "button", onclick: () => pedirTest(m)}, "No me convence"),
+      el("button", {class: "plano", type: "button", onclick: () => { estado.redacta = r(); pintarDetalle(); const a = $("manual"); if (a) a.focus(); }}, "Editar"),
+      el("button", {class: "lleno", type: "button", disabled: falta ? "" : null, onclick: () => hacer(() => enviarManual(m, r(), true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar")));
+}
 function activarIA() {
   if (!estado.pideClave) return el("button", {class: "enlace izquierda", type: "button", onclick: () => { estado.pideClave = true; pintarDetalle(); const c = $("clave"); if (c) c.focus(); }}, "Activar la IA en este dispositivo");
   const campo = el("input", {type: "password", id: "clave", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "sk-ant-…"});
@@ -572,6 +651,7 @@ function activarIA() {
         estado.pideClave = false;
         avisar("IA activada en este dispositivo");
         pintarDetalle();
+        propuestaAutomatica(estado.sel);
       }}, "Guardar")));
 }
 
@@ -632,19 +712,9 @@ function barraOutlook(m) {
       pintarDetalle();
       const campo = $(estado.redacta ? (modo === "reenviar" ? "para" : leer("agente.ia") ? "idea" : "manual") : "volver");
       if (campo && estado.redacta) campo.focus();
-    }}, icono(modo), MODOS[modo][1])));
-}
-// Respuestas de un toque. Outlook no deja a otras aplicaciones poner sus reacciones,
-// así que aquí cada icono prepara una respuesta corta al remitente, lista para enviar.
-const RAPIDAS = [["👍", "De acuerdo"], ["❤️", "Me encanta"], ["🎉", "Enhorabuena"], ["😄", "Me hace gracia"], ["😮", "Me sorprende"], ["😢", "Lo siento"]];
-function barraRapida(m) {
-  return el("div", {class: "rapidas"}, ...RAPIDAS.map(([icono, nombre]) =>
-    el("button", {class: "rapida", type: "button", title: nombre, "aria-label": "Responder con " + nombre, onclick: () => {
-      estado.redacta = Object.assign({mid: m.id, modo: "responder", texto: icono, idea: ""}, destinatariosIniciales(m, "responder"));
-      pintarDetalle();
-      const panel = document.querySelector(".redaccion");
-      if (panel) panel.scrollIntoView({block: "nearest"});
-    }}, icono)));
+    }}, icono(modo), MODOS[modo][1])),
+    // Las reacciones (pulgar, corazón…) solo las puede poner Outlook: este botón abre ahí el mismo correo.
+    m.webLink && enlaceSeguro(m.webLink) ? el("a", {class: "accion", href: enlaceSeguro(m.webLink).href, target: "_blank", rel: "noopener noreferrer"}, icono("reaccion"), "Reaccionar") : null);
 }
 function panelManual(m) {
   const r = estado.redacta && estado.redacta.mid === m.id ? estado.redacta : null;
@@ -691,9 +761,9 @@ function pintarDetalle() {
     el("div", {class: "carta cabecera"}, remitente(m, "div"), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
       c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null,
       c && c.fecha ? el("div", {class: "de"}, fechaLarga(c.fecha)) : null,
-      barraOutlook(m),
-      barraRapida(m)),
+      barraOutlook(m)),
     panelManual(m),
+    bloquePropuesta(m, esRespuesta),
     bloqueResumen(m, p, c),
     p.aviso ? el("span", {class: "aviso"}, (esRespuesta ? "Revisar bien: " : "") + p.aviso) : null,
     el("div", {class: "carta correo"},
@@ -719,6 +789,7 @@ function pintarDetalle() {
       faltaDato(m) ? el("span", {class: "pide"}, "Completa los huecos [FALTA: …] para poder enviar.") : null,
       el("div", {class: "fila"},
         el("button", {class: "plano", type: "button", onclick: () => hacer(() => descartar(m), [m.id], "Borrador descartado; el correo queda en Tuyos")}, "Descartar"),
+        leer("agente.ia") ? el("button", {class: "plano", type: "button", onclick: () => pedirTest(m, area.value)}, "No me convence") : null,
         botonEnviar)));
   } else {
     poner(d, el("div", {class: "fila"},
