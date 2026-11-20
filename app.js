@@ -480,7 +480,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=43"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=44"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -712,12 +712,13 @@ function lineasResumen(texto) {
 }
 // Afirmaciones de un report comercial que no llevan importe ni fecha: lo que hay que pedir que concreten.
 function flojas(m) {
-  const l = prop(m).sin_concretar;
-  return Array.isArray(l) ? l.filter((x) => x && x.cliente) : [];
+  // Análisis antiguos (v<3) eran demasiado duros: no se enseñan hasta que el motor los rehaga con el criterio nuevo.
+  const p = prop(m), l = p.sin_concretar;
+  return Array.isArray(l) && Number(p.v) >= 3 ? l.filter((x) => x && x.cliente).slice(0, 2) : [];
 }
 function pedirConcrecion(m) {
-  const guia = "Esto no es una respuesta de cortesía. Francesc quiere que le concreten por escrito lo que el report da por hecho sin datos. Escribe corto y directo, sin reproches y sin dar las gracias por el informe. Pide, para cada punto, importe o volumen estimado, producto, fecha prevista de pedido y siguiente paso con fecha, y que conteste antes del próximo report. Enumera los puntos tal cual, uno por línea:\n"
-    + flojas(m).map((x) => `- ${x.cliente}${x.quien ? " (" + x.quien + ")" : ""}: dice «${x.dicho}». Falta: ${x.falta}`).join("\n");
+  const guia = "Francesc quiere interesarse por uno o dos asuntos del report, con tacto: el comercial tiene que sentir interés y apoyo, no control. Escribe muy corto y cercano, como él escribe a su equipo: agradece el report en una frase, y pregunta con naturalidad cómo lo ve y para cuándo lo espera, o si necesita ayuda para cerrarlo (precio, visita conjunta, muestra). Nada de listas de datos que faltan, nada de exigir importes ni plazos de respuesta, ningún reproche. Como mucho dos asuntos; si uno basta, uno. Asuntos:\n"
+    + flojas(m).map((x) => `- ${x.cliente}${x.quien ? " (" + x.quien + ")" : ""}: dice «${x.dicho}». Interesa saber: ${x.falta}`).join("\n");
   abrir(m.id);
   if (!leer("agente.ia")) { avisar("Activa la IA en este dispositivo para redactar el recordatorio"); return; }
   pedirPropuesta(m, guia);
@@ -726,15 +727,15 @@ function listaFlojas(m) {
   const l = flojas(m);
   if (!l.length) return null;
   return el("div", {class: "flojas"},
-    el("span", {class: "eti"}, `Sin concretar (${l.length})`),
-    el("ul", {}, ...l.map((x) => el("li", {}, el("b", {}, x.cliente + (x.quien ? ", " + x.quien : "") + ": "), x.dicho, el("span", {class: "falta"}, " Falta: " + x.falta)))),
-    el("button", {class: "plano izquierda", type: "button", onclick: () => pedirConcrecion(m)}, "Pedir que lo concreten"));
+    el("span", {class: "eti"}, "Para seguir de cerca"),
+    el("ul", {}, ...l.map((x) => el("li", {}, el("b", {}, x.cliente + (x.quien ? ", " + x.quien : "") + ": "), x.dicho, el("span", {class: "falta"}, " Preguntar: " + x.falta)))),
+    el("button", {class: "plano izquierda", type: "button", onclick: () => pedirConcrecion(m)}, "Preguntarle cómo lo ve"));
 }
 function resumenDesplegable(m) {
   const lineas = lineasResumen(prop(m).resumen), n = flojas(m).length;
   if (!lineas.length && !n) return null;
   const d = el("details", {class: "resumen-ext" + (n ? " con-flojas" : "")},
-    el("summary", {}, "Resumen", n ? el("span", {class: "marca cola"}, n + " sin concretar") : null),
+    el("summary", {}, "Resumen", n ? el("span", {class: "marca cola"}, n + " para seguir") : null),
     lineas.length ? el("ul", {}, ...lineas.map((l) => el("li", {}, l))) : null,
     listaFlojas(m));
   d.open = !!estado.resumenAbierto[m.id];
@@ -990,7 +991,7 @@ Devuelve solo JSON válido con estos campos:
 - "tipo": "responder" (una persona espera una respuesta de Francesc), "boletin" (newsletter, publicidad o envío masivo), "archivar" (informativo que no le pide nada: notificaciones automáticas, acuses, agradecimientos, copias donde nadie le pregunta nada) o "pendiente" (le exige hacer algo que no es contestar, o no está claro).
 - "pide": una frase en castellano, 25 palabras como mucho, con lo que le piden o de qué va. Nunca vacío.
 - "resumen": de 2 a 6 líneas, cada una empezando por "- ", en castellano, 110 palabras como mucho. Lo esencial con nombres, cifras, fechas y plazos; lo importante de cada adjunto que hayas podido leer; y al final qué tiene que hacer o decidir Francesc, si hay algo.
-- "sin_concretar": solo en reports, informes o partes de comerciales; en los demás, lista vacía. Francesc los lee con desconfianza: los comerciales dan por hecha una venta sin concretarla. Cada afirmación que no se puede comprobar o no compromete a nada ("comprará", "está interesado", "nos pasará pedido", visitas sin resultado, ofertas sin fecha) como {"quien": comercial, "cliente": …, "dicho": lo que afirma en 12 palabras como mucho, "falta": lo que tendría que haber dicho (importe, producto, fecha de pedido, quién decide, siguiente paso)}. No incluyas lo concretado con importe y fecha. Como mucho 10. En el resumen de un report separa lo cerrado de lo que son intenciones.
+- "sin_concretar": solo para reports, informes o partes de comerciales; en cualquier otro correo, lista vacía. Francesc quiere seguir de cerca lo importante sin agobiar al comercial: elige como mucho DOS asuntos, los que más dinero mueven o los que más se arrastran, en los que el comercial da por hecha o muy probable una venta relevante sin decir cuánto ni cuándo ("nos pasará pedido", "comprará", "con intención de cerrar", una oferta grande sin fecha). Si no hay ninguno que de verdad lo merezca, lista vacía: es lo normal en un report correcto. NO incluyas pedidos ya hechos o enviados (por ejemplo "envía compra" o "nuevo pedido"), entregas, muestras, incidencias, recogidas, visitas de rutina ni clientes pequeños, aunque no lleven importe. Para cada asunto: "quien" (el comercial), "cliente", "dicho" (lo que afirma, en 12 palabras como mucho) y "falta" (el único dato que más ayudaría: normalmente la fecha prevista o el importe aproximado), en tono neutro, sin juzgar. En el "resumen" de un report di con naturalidad qué hay cerrado y qué son intenciones, sin tono de reproche.
 - "sospechoso": true si pide cambiar datos bancarios, pagos urgentes, credenciales o algo anómalo; si no, false.`;
 function avisoPropio(m) { return dir(m).toLowerCase() === "notifications@github.com" && /^\[francescpampols-collab\/agente-correo[^\]]*\]\s*Run (failed|cancelled|succeeded)/i.test(m.subject || ""); }
 async function clasificarUno(m) {
@@ -1008,9 +1009,9 @@ async function clasificarUno(m) {
   if (!["responder", "boletin", "archivar", "pendiente"].includes(tipo) || !pide) throw new Error("clasificación no válida");
   // Regla fija: un report, informe o parte con adjuntos nunca se da por archivable.
   if (tipo === "archivar" && m.hasAttachments && /\b(report|reporte|informe|parte|partes)\b/i.test(m.subject || "")) tipo = "pendiente";
-  const flojas = (Array.isArray(j.sin_concretar) ? j.sin_concretar : []).filter((x) => x && typeof x === "object" && String(x.cliente || "").trim()).slice(0, 10)
+  const flojas = (Array.isArray(j.sin_concretar) ? j.sin_concretar : []).filter((x) => x && typeof x === "object" && String(x.cliente || "").trim()).slice(0, 2)
     .map((x) => ({quien: String(x.quien || "").trim().slice(0, 160), cliente: String(x.cliente || "").trim().slice(0, 160), dicho: String(x.dicho || "").trim().slice(0, 160), falta: String(x.falta || "").trim().slice(0, 160)}));
-  const datos = {tipo, pide, resumen: String(j.resumen || "").trim().slice(0, 1200), sin_concretar: flojas, v: 2, app: true};
+  const datos = {tipo, pide, resumen: String(j.resumen || "").trim().slice(0, 1200), sin_concretar: flojas, v: 3, app: true};
   if (j.sospechoso === true) { tipo = "pendiente"; Object.assign(datos, {tipo, aviso: "Sospechoso: revisa el remitente antes de hacer nada."}); }
   // Si el motor lo ha clasificado entretanto, manda el motor.
   const ahora = await api("GET", `/me/messages/${id(m.id)}?$select=id,categories`);
