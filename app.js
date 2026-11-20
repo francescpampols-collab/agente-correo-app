@@ -267,12 +267,13 @@ function abrir(mid) {
 async function cargarCorreo(mid) {
   try {
     const j = await api("GET", `/me/messages/${id(mid)}?$select=subject,body,toRecipients,ccRecipients,hasAttachments,receivedDateTime`);
-    const c = {texto: (((j || {}).body || {}).content || "").replace(/^\s*Precaución:[\s\S]*?archivos adjuntos\.\s*/i, "").replace(/\r/g, "").replace(/\[cid:[^\]]*\]\s*/g, "").replace(/\n{3,}/g, "\n\n").trim(), para: [], adjuntos: [], fecha: (j || {}).receivedDateTime || ""};
+    const c = {texto: (((j || {}).body || {}).content || "").replace(/^\s*Precaución:[\s\S]*?archivos adjuntos\.\s*/i, "").replace(/\r/g, "").replace(/\[cid:[^\]]*\]\s*/g, ""), para: [], adjuntos: [], fecha: (j || {}).receivedDateTime || ""};
     for (const r of ((j || {}).toRecipients || []).concat((j || {}).ccRecipients || [])) if (r.emailAddress && r.emailAddress.address) c.para.push(r.emailAddress.address);
     if ((j || {}).hasAttachments) {
       const a = await api("GET", `/me/messages/${id(mid)}/attachments?$select=id,name,size,contentType`);
       c.adjuntos = ((a || {}).value || []).filter((x) => x.name);
     }
+    c.texto = limpiarTexto(c.texto);
     estado.cuerpos[mid] = c;
   } catch (e) { estado.cuerpos[mid] = {error: e.message, texto: "", para: [], adjuntos: []}; }
   if (estado.sel === mid) pintarDetalle();
@@ -339,6 +340,34 @@ function cartaSimple(m) {
       estado.tab === "arch" ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
       el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
 }
+// Limpia el texto de un correo para leerlo: fuera caracteres invisibles, líneas de relleno y huecos.
+function limpiarTexto(t) {
+  return (t || "")
+    .replace(/[\u034f\u00ad\u200b-\u200f\u2060\ufeff]/g, "")
+    .replace(/\u00a0/g, " ")
+    .replace(/<mailto:[^>\s]*>/gi, "")
+    .split("\n").map((l) => l.replace(/[ \t]+/g, " ").trim())
+    .filter((l) => !/^[-–—_=|*·.•\s]{1,}$/.test(l))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+// Convierte «[Texto]<https://…>» y «<https://…>» en enlaces cortos, en vez de mostrar direcciones kilométricas.
+function nodosDeTexto(texto) {
+  const nodos = [];
+  const re = /(\[([^\]\n]{1,120})\]\s?)?<(https?:\/\/[^>\s]+)>|(https?:\/\/[^\s<>]{50,})/g;
+  let ultimo = 0, m;
+  while ((m = re.exec(texto))) {
+    if (m.index > ultimo) nodos.push(document.createTextNode(texto.slice(ultimo, m.index)));
+    const u = enlaceSeguro(m[3] || m[4]);
+    const etiqueta = (m[2] || "").trim();
+    if (u) nodos.push(el("a", {href: u.href, target: "_blank", rel: "noopener noreferrer"}, etiqueta || (m[3] ? " (enlace: " + u.hostname + ")" : u.hostname + "/…")));
+    else if (etiqueta) nodos.push(document.createTextNode(etiqueta));
+    ultimo = re.lastIndex;
+  }
+  if (ultimo < texto.length) nodos.push(document.createTextNode(texto.slice(ultimo)));
+  return nodos;
+}
 // Como append, pero sin los huecos: append(null) escribiría la palabra «null».
 function poner(nodo, ...hijos) { for (const h of hijos) if (h != null) nodo.append(h); }
 function pintarDetalle() {
@@ -364,7 +393,7 @@ function pintarDetalle() {
       el("span", {class: "eti"}, "Correo"),
       !c ? el("p", {class: "pide"}, "Cargando…")
         : c.error ? el("p", {class: "pide"}, "No se ha podido cargar el correo: " + c.error)
-        : el("p", {class: "cuerpo"}, c.texto || "(sin texto)"),
+        : el("p", {class: "cuerpo"}, ...nodosDeTexto(c.texto || "(sin texto)")),
       ...((c && c.adjuntos) || []).map((a) => el("button", {class: "plano adjunto", type: "button", onclick: () => hacer(() => descargar(m.id, a), [], "Descargado: " + a.name)}, "Adjunto · " + a.name)),
       outlook ? el("a", {href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null));
   if (esRespuesta) {
