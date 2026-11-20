@@ -432,7 +432,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=26"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=27"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -768,22 +768,26 @@ function bloquePropuesta(m, esRespuesta) {
         el("button", {class: "plano", type: "button", onclick: () => { x.fase = x.texto ? "lista" : "error"; pintarDetalle(); }}, "Volver"),
         el("button", {class: "lleno", type: "button", onclick: () => { const g = guia(); if (!g) { avisar("Contesta al menos una pregunta"); return; } pedirPropuesta(m, g); }}, "Redactar con mis respuestas")));
   }
-  const r = () => x.destino && MODOS[x.destino.modo]
-    ? {mid: m.id, modo: x.destino.modo, texto: x.texto, idea: "", para: x.destino.para.slice(), cc: x.destino.cc.slice()}
-    : Object.assign({mid: m.id, modo: x.todos ? "todos" : "responder", texto: x.texto, idea: ""}, destinatariosIniciales(m, x.todos ? "todos" : "responder"));
+  // Destinatarios a la vista y editables: se parte de lo que haría Outlook y se quita o añade a quien haga falta.
+  if (!x.destino || !MODOS[x.destino.modo] || !Array.isArray(x.destino.para) || !Array.isArray(x.destino.cc)) {
+    const modo = x.todos ? "todos" : "responder";
+    x.destino = Object.assign({modo}, destinatariosIniciales(m, modo));
+  }
+  const r = () => ({mid: m.id, modo: x.destino.modo, texto: x.texto, idea: "", para: x.destino.para.slice(), cc: x.destino.cc.slice()});
+  const cambiar = () => { const modo = x.destino.modo === "todos" ? "responder" : "todos"; x.destino = Object.assign({modo}, destinatariosIniciales(m, modo)); pintarDetalle(); };
   const falta = /\[FALTA/i.test(x.texto);
   return el("div", {class: "carta propuesta"},
     el("span", {class: "eti"}, "Propuesta de respuesta (" + x.modelo + ")"),
+    campoDirecciones("Para", x.destino.para, "ppara"),
+    campoDirecciones("CC", x.destino.cc, "pcc"),
+    el("button", {class: "enlace izquierda", type: "button", onclick: cambiar}, x.destino.modo === "todos" ? "Responder solo al remitente" : "Responder a todos (incluye a los que estaban en copia)"),
     el("p", {class: "cuerpo"}, x.texto),
-    vistaFirma(),
-    el("span", {class: "eti"}, "Se enviará a"),
-    lineasDestino(r().para, r().cc),
-    el("button", {class: "enlace izquierda", type: "button", onclick: () => { delete x.destino; x.todos = !(r().modo === "todos"); pintarDetalle(); }}, r().modo === "todos" ? "Responder solo al remitente" : "Responder a todos (incluye a los que estaban en copia)"),
     falta ? el("span", {class: "aviso"}, "Tiene huecos [FALTA: …]: edítala para completarlos") : null,
     el("div", {class: "fila"},
-      el("button", {class: "plano", type: "button", onclick: () => pedirTest(m)}, "No me convence"),
+      el("button", {class: "plano", type: "button", onclick: () => pedirTest(m, null, x.destino)}, "No me convence"),
       el("button", {class: "plano", type: "button", onclick: () => { estado.redacta = r(); pintarDetalle(); const a = $("manual"); if (a) a.focus(); }}, "Editar"),
-      el("button", {class: "lleno", type: "button", disabled: falta ? "" : null, onclick: () => hacer(() => enviarManual(m, r(), true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar")));
+      el("button", {class: "lleno", type: "button", disabled: falta ? "" : null, onclick: () => hacer(() => enviarManual(m, r(), true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar")),
+    vistaFirma());
 }
 function activarIA() {
   if (!estado.pideClave) return el("button", {class: "enlace izquierda", type: "button", onclick: () => { estado.pideClave = true; pintarDetalle(); const c = $("clave"); if (c) c.focus(); }}, "Activar la IA en este dispositivo");
@@ -894,11 +898,11 @@ function panelManual(m) {
       el("button", {class: "lleno corto", type: "button", onclick: redactar}, r.texto.trim() ? "Mejorar con IA" : "Redactar con IA"),
       r.modo !== "reenviar" ? el("button", {class: "plano corto", type: "button", onclick: () => { estado.redacta = null; pedirTest(m, r.texto, r); }}, "Afinar con 5 preguntas") : null) : activarIA(),
     area,
-    vistaFirma(),
     /\[FALTA/i.test(r.texto) ? el("span", {class: "aviso"}, "Completa los huecos [FALTA: …] para poder enviar") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => hacer(() => enviarManual(m, r, false), [], "Enviado")}, "Enviar"),
-      el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviarManual(m, r, true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar en " + carpetaDe(m).nombre)));
+      el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviarManual(m, r, true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar en " + carpetaDe(m).nombre)),
+    vistaFirma());
 }
 // Como append, pero sin los huecos: append(null) escribiría la palabra «null».
 function poner(nodo, ...hijos) { for (const h of hijos) if (h != null) nodo.append(h); }
