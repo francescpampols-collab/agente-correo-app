@@ -262,6 +262,7 @@ async function hacer(tarea, ids, hecho, recargar) {
 
 // ---------- pantalla ----------
 function abrir(mid) {
+  if (estado.sel !== mid) { estado.redacta = null; estado.soloTexto = false; }
   estado.sel = mid;
   document.body.classList.add("viendo");
   pintar();
@@ -274,13 +275,50 @@ async function cargarCorreo(mid) {
     const c = {texto: (((j || {}).body || {}).content || "").replace(/^\s*Precaución:[\s\S]*?archivos adjuntos\.\s*/i, "").replace(/\r/g, "").replace(/\[cid:[^\]]*\]\s*/g, ""), para: [], adjuntos: [], fecha: (j || {}).receivedDateTime || ""};
     for (const r of ((j || {}).toRecipients || []).concat((j || {}).ccRecipients || [])) if (r.emailAddress && r.emailAddress.address) c.para.push(r.emailAddress.address);
     if ((j || {}).hasAttachments) {
-      const a = await api("GET", `/me/messages/${id(mid)}/attachments?$select=id,name,size,contentType`);
+      const a = await api("GET", `/me/messages/${id(mid)}/attachments?$select=id,name,size,contentType,isInline,microsoft.graph.fileAttachment/contentId`);
       c.adjuntos = ((a || {}).value || []).filter((x) => x.name);
     }
     c.texto = limpiarTexto(c.texto);
     estado.cuerpos[mid] = c;
+    if (estado.sel === mid) pintarDetalle();
+    c.html = await cargarHtml(mid, c);
   } catch (e) { estado.cuerpos[mid] = {error: e.message, texto: "", para: [], adjuntos: []}; }
   if (estado.sel === mid) pintarDetalle();
+}
+// El correo con su formato: el HTML tal cual llega y las imágenes incrustadas (cid:) como datos.
+// Se pinta en un marco aislado (lector.html); aquí no se interpreta nada.
+async function cargarHtml(mid, c) {
+  try {
+    const j = await api("GET", `/me/messages/${id(mid)}?$select=body`, undefined, "html");
+    const cuerpo = (j || {}).body || {};
+    if (cuerpo.contentType !== "html" || !cuerpo.content) return null;
+    let html = cuerpo.content;
+    if (html.length > 3000000) return null;
+    const dentro = c.adjuntos.filter((a) => a.contentId && /^image\/(png|jpe?g|gif|webp|bmp)$/i.test(a.contentType || "") && a.size <= 2000000).slice(0, 15);
+    for (const a of dentro) {
+      const cid = "cid:" + String(a.contentId).replace(/^<|>$/g, "");
+      if (!html.includes(cid)) continue;
+      const f = await api("GET", `/me/messages/${id(mid)}/attachments/${id(a.id)}`);
+      if (f && f.contentBytes) html = html.split(cid).join(`data:${a.contentType.toLowerCase()};base64,${f.contentBytes}`);
+      a.incrustado = true;
+    }
+    return html;
+  } catch (e) { return null; }
+}
+let marco = null;
+window.addEventListener("message", (e) => {
+  if (!marco || e.source !== marco.contentWindow || !e.data) return;
+  if (e.data.tipo === "listo" && !marco.enviado && marco.html) {
+    marco.enviado = true;
+    marco.contentWindow.postMessage({tipo: "correo", html: marco.html}, "*");
+  } else if (e.data.tipo === "alto" && Number.isFinite(e.data.alto)) {
+    marco.style.height = Math.min(Math.max(e.data.alto, 80), 30000) + "px";
+  }
+});
+function marcoCorreo(html) {
+  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=13"});
+  marco.html = html;
+  return marco;
 }
 async function descargar(mid, adj) {
   const r = await fetch(`${GRAPH}/me/messages/${id(mid)}/attachments/${id(adj.id)}/$value`, {headers: {Authorization: "Bearer " + await token(), Prefer: 'IdType="ImmutableId"'}});
@@ -297,6 +335,10 @@ function alPulsarCarta(mid) {
 }
 function titulo(m) {
   return el("button", {class: "asunto", type: "button", onclick: () => abrir(m.id)}, m.subject || "(sin asunto)");
+}
+function fechaLarga(iso) {
+  const f = new Date(iso);
+  return isNaN(f) ? "" : f.toLocaleString("es-ES", {weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit"});
 }
 function cerrar() { estado.sel = null; document.body.classList.remove("viendo"); }
 function faltaDato(m, texto) { return /\[FALTA/i.test(texto != null ? texto : prop(m).respuesta || ""); }
@@ -351,6 +393,7 @@ function limpiarTexto(t) {
     .replace(/[\u034f\u00ad\u200b-\u200f\u2060\ufeff]/g, "")
     .replace(/\u00a0/g, " ")
     .replace(/<mailto:[^>\s]*>/gi, "")
+    .replace(/Precaución: Este correo[\s\S]{0,220}?archivos adjuntos\.\s*/gi, "")
     .split("\n").map((l) => l.replace(/[ \t]+/g, " ").trim())
     .filter((l) => !/^[-–—_=|*·.•\s]{1,}$/.test(l))
     .join("\n")
@@ -373,6 +416,96 @@ function nodosDeTexto(texto) {
   if (ultimo < texto.length) nodos.push(document.createTextNode(texto.slice(ultimo)));
   return nodos;
 }
+// Separa el mensaje nuevo de los anteriores que vienen citados debajo («De: … Enviado el: …»).
+function partirHilo(texto) {
+  const lineas = (texto || "").split("\n");
+  const partes = [{quien: null, cuando: null, lineas: []}];
+  const reDe = /^(De|From|Von|Da)\s?:\s*(.+)$/i, reFecha = /^(Enviat el|Enviado el|Enviado|Enviat|Sent|Envoyé|Date|Fecha|Data|Gesendet)\s?:\s*(.+)$/i;
+  const reResto = /^(Per a|Para|To|A|Cc|CC|Tema|Asunto|Assumpte|Subject|Objet|Importància|Importancia|Importance)\s?:/i;
+  for (let i = 0; i < lineas.length; i++) {
+    const a = reDe.exec(lineas[i]);
+    let f = null, j = i + 1;
+    if (a) for (; j <= i + 4 && j < lineas.length; j++) { f = reFecha.exec(lineas[j]); if (f) break; }
+    if (!a || !f) { partes[partes.length - 1].lineas.push(lineas[i]); continue; }
+    let fin = j;
+    for (let k = j + 1; k <= j + 6 && k < lineas.length; k++) { if (reResto.test(lineas[k])) fin = k; else if (lineas[k].trim() && !/^[^:]{0,60}<[^>]+>;?$|;$/.test(lineas[k])) break; else if (!lineas[k].trim()) break; else fin = k; }
+    partes.push({quien: a[2].replace(/<[^>]*>/g, "").replace(/["']/g, "").trim() || a[2].trim(), cuando: f[2].trim(), lineas: []});
+    i = fin;
+  }
+  return partes.map((x) => ({quien: x.quien, cuando: x.cuando, texto: x.lineas.join("\n").replace(/\n{3,}/g, "\n\n").trim()})).filter((x, k) => k === 0 || x.texto || x.quien);
+}
+function hiloEnTexto(texto) {
+  return partirHilo(texto).map((x, k) => k === 0
+    ? el("p", {class: "cuerpo"}, ...nodosDeTexto(x.texto || "(sin texto)"))
+    : el("div", {class: "anterior"},
+        el("div", {class: "anterior-cab"}, el("b", {}, x.quien), el("span", {}, x.cuando)),
+        el("p", {class: "cuerpo"}, ...nodosDeTexto(x.texto || "(sin texto)"))));
+}
+// Iconos de responder, responder a todos y reenviar.
+const TRAZOS = {
+  responder: "M10 7 4 13l6 6M4 13h9a7 7 0 0 1 7 7",
+  todos: "M7 7 1 13l6 6M13 7l-6 6 6 6M7 13h8a6 6 0 0 1 6 6",
+  reenviar: "M14 7l6 6-6 6M20 13h-9a7 7 0 0 0-7 7",
+};
+function icono(nombre) {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 26");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", "icono");
+  const t = document.createElementNS(NS, "path");
+  t.setAttribute("d", TRAZOS[nombre]);
+  svg.append(t);
+  return svg;
+}
+const MODOS = {responder: ["createReply", "Responder"], todos: ["createReplyAll", "Responder a todos"], reenviar: ["createForward", "Reenviar"]};
+const CORREO = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
+// Respuesta o reenvío escritos a mano: Outlook crea el mensaje (con el hilo y los adjuntos) y se envía tal cual.
+async function enviarManual(m, r, archivarDespues) {
+  if (!r.texto.trim()) throw new Error("Escribe el mensaje antes de enviar");
+  const para = r.modo === "reenviar" ? r.para.split(/[,;\s]+/).filter(Boolean) : [];
+  if (r.modo === "reenviar" && (!para.length || !para.every((x) => CORREO.test(x)))) throw new Error("Revisa las direcciones de «Para»");
+  const nuevo = await api("POST", `/me/messages/${id(m.id)}/${MODOS[r.modo][0]}`, undefined, "html");
+  const cambio = {body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", textoAHtml(r.texto))}};
+  if (para.length) cambio.toRecipients = para.map((x) => ({emailAddress: {address: x}}));
+  await api("PATCH", `/me/messages/${id(nuevo.id)}`, cambio);
+  await api("POST", `/me/messages/${id(nuevo.id)}/send`);
+  estado.redacta = null;
+  if (archivarDespues) await archivar(m);
+}
+function barraOutlook(m) {
+  const r = estado.redacta && estado.redacta.mid === m.id ? estado.redacta : null;
+  return el("div", {class: "barra"}, ...Object.keys(MODOS).map((modo) =>
+    el("button", {class: "accion" + (r && r.modo === modo ? " activa" : ""), type: "button", "aria-pressed": r && r.modo === modo ? "true" : "false", onclick: () => {
+      estado.redacta = r && r.modo === modo ? null : {mid: m.id, modo, texto: r ? r.texto : "", para: r ? r.para : ""};
+      pintarDetalle();
+      const campo = document.querySelector(estado.redacta && modo === "reenviar" ? "#para" : "#manual");
+      if (campo) campo.focus();
+    }}, icono(modo), MODOS[modo][1])));
+}
+function panelManual(m) {
+  const r = estado.redacta && estado.redacta.mid === m.id ? estado.redacta : null;
+  if (!r) return null;
+  const area = el("textarea", {id: "manual", "aria-label": MODOS[r.modo][1]});
+  area.value = r.texto;
+  area.addEventListener("input", () => { r.texto = area.value; });
+  let para = null;
+  if (r.modo === "reenviar") {
+    const campo = el("input", {type: "text", id: "para", inputmode: "email", autocomplete: "off", autocapitalize: "off", placeholder: "nombre@empresa.com"});
+    campo.value = r.para;
+    campo.addEventListener("input", () => { r.para = campo.value; });
+    para = el("label", {}, "Para", campo);
+  }
+  const destino = r.modo === "responder" ? "Se envía a " + (dir(m) || "quien te escribió") : r.modo === "todos" ? "Se envía a quien te escribió y a todos los que estaban en el correo" : "Se reenvía con los adjuntos del correo";
+  return el("div", {class: "carta redaccion"},
+    el("span", {class: "eti"}, MODOS[r.modo][1]),
+    para,
+    el("span", {class: "de"}, destino),
+    area,
+    el("div", {class: "fila"},
+      el("button", {class: "plano", type: "button", onclick: () => hacer(() => enviarManual(m, r, false), [], "Enviado")}, "Enviar"),
+      el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviarManual(m, r, true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar en " + carpetaDe(m).nombre)));
+}
 // Como append, pero sin los huecos: append(null) escribiría la palabra «null».
 function poner(nodo, ...hijos) { for (const h of hijos) if (h != null) nodo.append(h); }
 function pintarDetalle() {
@@ -390,16 +523,21 @@ function pintarDetalle() {
   const esArchivar = estado.datos.arch.includes(m) || estado.datos.news.includes(m);
   poner(d,
     el("button", {class: "plano izquierda", id: "volver", type: "button", onclick: () => { cerrar(); pintar(); }}, "‹ Bandeja"),
-    el("div", {}, remitente(m, "div"), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
-      c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null),
-    !esRespuesta && p.pide ? el("p", {class: "pide"}, p.pide) : null,
+    el("div", {class: "carta cabecera"}, remitente(m, "div"), el("div", {class: "asunto grande"}, m.subject || "(sin asunto)"),
+      c && c.para.length ? el("div", {class: "de"}, "Para: " + c.para.slice(0, 8).join(", ")) : null,
+      c && c.fecha ? el("div", {class: "de"}, fechaLarga(c.fecha)) : null,
+      barraOutlook(m)),
+    panelManual(m),
+    !esRespuesta && p.pide ? el("div", {class: "nota"}, el("span", {class: "eti"}, "Resumen del agente"), el("p", {class: "pide normal"}, p.pide)) : null,
     p.aviso ? el("span", {class: "aviso"}, (esRespuesta ? "Revisar bien: " : "") + p.aviso) : null,
-    el("div", {class: "carta"},
+    el("div", {class: "carta correo"},
       el("span", {class: "eti"}, "Correo"),
       !c ? el("p", {class: "pide"}, "Cargando…")
         : c.error ? el("p", {class: "pide"}, "No se ha podido cargar el correo: " + c.error)
-        : el("p", {class: "cuerpo"}, ...nodosDeTexto(c.texto || "(sin texto)")),
-      ...((c && c.adjuntos) || []).map((a) => el("button", {class: "plano adjunto", type: "button", onclick: () => hacer(() => descargar(m.id, a), [], "Descargado: " + a.name)}, "Adjunto: " + a.name)),
+        : c.html && !estado.soloTexto ? marcoCorreo(c.html)
+        : el("div", {class: "hilo"}, ...hiloEnTexto(c.texto)),
+      c && c.html ? el("button", {class: "enlace izquierda", type: "button", onclick: () => { estado.soloTexto = !estado.soloTexto; pintarDetalle(); }}, estado.soloTexto ? "Ver con formato e imágenes" : "Ver solo el texto") : null,
+      ...((c && c.adjuntos) || []).filter((a) => !a.incrustado).map((a) => el("button", {class: "plano adjunto", type: "button", onclick: () => hacer(() => descargar(m.id, a), [], "Descargado: " + a.name)}, "Adjunto: " + a.name)),
       outlook ? el("a", {href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null));
   if (esRespuesta) {
     const area = el("textarea", {id: "borrador", "aria-label": "Tu respuesta"});
@@ -408,14 +546,14 @@ function pintarDetalle() {
     const comprobar = () => { botonEnviar.disabled = faltaDato(m, area.value) || !area.value.trim(); };
     area.addEventListener("input", comprobar);
     comprobar();
-    poner(d,
-      el("span", {class: "eti"}, "Tu respuesta" + (p.todos ? " (a todos)" : "")),
+    poner(d, el("div", {class: "carta redaccion"},
+      el("span", {class: "eti"}, "Respuesta preparada" + (p.todos ? " (a todos)" : "")),
       destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
       area,
       faltaDato(m) ? el("span", {class: "pide"}, "Completa los huecos [FALTA: …] para poder enviar.") : null,
       el("div", {class: "fila"},
         el("button", {class: "plano", type: "button", onclick: () => hacer(() => descartar(m), [m.id], "Borrador descartado; el correo queda en Tuyos")}, "Descartar"),
-        botonEnviar));
+        botonEnviar)));
   } else {
     poner(d, el("div", {class: "fila"},
       esArchivar ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
