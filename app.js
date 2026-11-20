@@ -14,12 +14,12 @@ const IA_MODELOS = ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", 
 const IA_NOMBRES = {"claude-fable-5-2": "Fable 5.2", "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5"};
 const ESTILO_BASE = "Muy corto y directo, al grano en la primera frase. Idioma: catalán con el equipo interno de Pampols y con empresas catalanas; castellano con proveedores de fuera; inglés si le escriben en inglés. Saludo «Hola [nombre],» o ninguno. Cierre «Gràcies,» o «Gracias,» y en la línea siguiente «Francesc». Sin fórmulas de relleno, sin guiones largos, sin listas ni negritas.";
 const CAT = {resp: "Agente: responder", news: "Agente: boletín", arch: "Agente: archivar", pend: "Agente: pendiente", baja: "Agente: baja", manual: "Agente: baja manual"};
-const PESTANAS = [["nuevo", "Nuevos"], ["resp", "Responder"], ["news", "Boletines"], ["arch", "Archivar"], ["pend", "Tuyos"]];
+const PESTANAS = [["nuevo", "Nuevos"], ["resp", "Responder"], ["news", "Boletines"], ["arch", "Archivar"], ["pend", "Tuyos"], ["busca", "Buscar"]];
 const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read";
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
+const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, consulta: "", buscando: false, buscado: false, fuera: null, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -239,7 +239,7 @@ async function cargar() {
   $("recargar").disabled = true;
   try {
     if (!estado.carpetas) estado.carpetas = await leerCarpetas();
-    estado.datos = await listarTodo();
+    estado.datos = Object.assign(await listarTodo(), {busca: (estado.datos.busca || []).filter((m) => m.archivado)});
     estado.lista = await leerLista();
     if (estado.sel && !todos().some((m) => m.id === estado.sel)) cerrar();
     if (enProceso.size) quitar(Array.from(enProceso));
@@ -249,7 +249,7 @@ async function cargar() {
   pintar();
   quienSoy().then(precargar).then(cargarContactos);
 }
-function todos() { return [].concat(estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
+function todos() { return [].concat(estado.datos.busca || [], estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
 function quitar(ids) {
   for (const k of Object.keys(estado.datos)) estado.datos[k] = estado.datos[k].filter((m) => !ids.includes(m.id));
   if (ids.includes(estado.sel)) cerrar();
@@ -450,7 +450,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=31"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=32"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -532,6 +532,82 @@ function cartaGrupo(g) {
       el("button", {class: "plano archivo", type: "button", onclick: () => hacer(async () => { for (const m of g.items) await archivar(m); }, ids, "Archivado en " + carpetaDe(g.items[0]).nombre)}, "Archivar en " + carpetaDe(g.items[0]).nombre),
       g.dir ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivarSiempre(g), ids, "Archivado. Lo nuevo de este remitente se archivará solo en cada pasada")}, "Archivar siempre") : null,
       el("button", {class: "plano peligro", type: "button", onclick: () => hacer(() => pedirBaja(g), ids, posible ? "La baja se tramita en la próxima pasada" : "Este boletín no admite baja automática: te aparecerá en Tuyos")}, "Dar de baja")));
+}
+// ---------- buscar correos ya archivados y devolverlos a la bandeja ----------
+// Carpetas que no interesan al buscar: enviados, borradores, eliminados y no deseado.
+async function carpetasFuera() {
+  if (estado.fuera) return estado.fuera;
+  const ids = new Set();
+  for (const n of ["sentitems", "drafts", "deleteditems", "junkemail", "outbox"]) {
+    try { ids.add((await api("GET", `/me/mailFolders/${n}?$select=id`)).id); } catch (e) {}
+  }
+  try { estado.bandejaId = (await api("GET", "/me/mailFolders/inbox?$select=id")).id; } catch (e) {}
+  estado.fuera = ids;
+  return ids;
+}
+async function buscar() {
+  const t = estado.consulta.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
+  if (t.length < 2) { avisar("Escribe al menos dos letras del asunto o del remitente"); return; }
+  estado.buscando = true;
+  pintar();
+  try {
+    const fuera = await carpetasFuera();
+    const j = await api("GET", "/me/messages?" + new URLSearchParams({"$search": `"subject:\"${t}\" OR from:\"${t}\""`, "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,parentFolderId", "$top": "40"}));
+    const enBandeja = new Set([].concat(estado.datos.nuevo, estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend).map((m) => m.id));
+    const nombres = {};
+    for (const [n, i] of Object.entries(estado.carpetas || {})) nombres[i] = n;
+    estado.datos.busca = (j.value || []).filter((m) => !fuera.has(m.parentFolderId) && m.parentFolderId !== estado.bandejaId && !enBandeja.has(m.id))
+      .sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
+    estado.datos.busca.forEach((m) => { m.archivado = true; m.carpeta = nombres[m.parentFolderId] || "otra carpeta"; });
+    estado.buscado = true;
+  } catch (e) { avisar("No se ha podido buscar: " + e.message); }
+  estado.buscando = false;
+  pintar();
+}
+// Devuelve un correo archivado a la bandeja, en «Tuyos», para tratarlo como cualquier otro.
+function reactivar(m) {
+  const antes = {categorias: m.categories, lista: estado.datos.busca.slice()};
+  estado.datos.busca = estado.datos.busca.filter((x) => x.id !== m.id);
+  m.categories = (m.categories || []).filter((c) => !c.startsWith("Agente:")).concat(CAT.pend);
+  m.archivado = false;
+  estado.datos.pend.unshift(m);
+  avisar("Devuelto a la bandeja: está en Tuyos");
+  pintar();
+  colaAcciones = colaAcciones.then(async () => {
+    try {
+      await api("POST", `/me/messages/${id(m.id)}/move`, {destinationId: "inbox"});
+      await api("PATCH", `/me/messages/${id(m.id)}`, {categories: m.categories});
+    } catch (e) {
+      estado.datos.pend = estado.datos.pend.filter((x) => x.id !== m.id);
+      m.categories = antes.categorias; m.archivado = true;
+      estado.datos.busca = antes.lista;
+      avisar("No se ha podido devolver a la bandeja: " + e.message);
+      pintar();
+    }
+  });
+}
+function fechaCorta(iso) { const f = new Date(iso); return isNaN(f) ? "" : f.toLocaleDateString("es-ES", {day: "numeric", month: "short", year: "numeric"}); }
+function cartaBusqueda(m) {
+  const outlook = m.webLink ? enlaceSeguro(m.webLink) : null;
+  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
+    remitente(m),
+    titulo(m),
+    el("span", {class: "de"}, fechaCorta(m.receivedDateTime) + ", guardado en " + m.carpeta),
+    marcas(m),
+    filaAdjuntos(m),
+    extracto(m) ? el("p", {class: "pide"}, extracto(m).slice(0, 180)) : null,
+    el("div", {class: "fila"},
+      outlook ? el("a", {class: "plano", href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null,
+      el("button", {class: "lleno", type: "button", onclick: () => reactivar(m)}, "Devolver a la bandeja")));
+}
+function panelBusqueda() {
+  const campo = el("input", {type: "text", id: "consulta", autocomplete: "off", enterkeyhint: "search", placeholder: "Asunto o remitente"});
+  campo.value = estado.consulta;
+  campo.addEventListener("input", () => { estado.consulta = campo.value; });
+  campo.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscar(); } });
+  return el("div", {class: "carta buscador"},
+    el("label", {}, "Buscar en los correos archivados", campo),
+    el("button", {class: "lleno", type: "button", disabled: estado.buscando ? "" : null, onclick: buscar}, estado.buscando ? "Buscando…" : "Buscar"));
 }
 // Adjuntos a la vista, en la lista y arriba del correo abierto: un toque y se descargan para abrirlos.
 function tamano(n) { return n > 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round((n || 0) / 1024)) + " KB"; }
@@ -1074,13 +1150,15 @@ function pintarDetalle() {
   } else {
     poner(d, el("div", {class: "fila"},
       esArchivar ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
-      el("button", {class: "lleno archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
+      m.archivado
+        ? el("button", {class: "lleno", type: "button", onclick: () => reactivar(m)}, "Devolver a la bandeja")
+        : el("button", {class: "lleno archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
   }
 }
 function pintar() {
   const d = estado.datos;
   const g = grupos();
-  const n = {nuevo: d.nuevo.length, resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length};
+  const n = {busca: d.busca.length, nuevo: d.nuevo.length, resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length};
   $("resumen").textContent = `${n.resp} ${n.resp === 1 ? "respuesta lista" : "respuestas listas"} y ${d.news.length + n.arch} para archivar`;
   $("pestanas").replaceChildren(...PESTANAS.map(([k, t]) => el("button", {type: "button", "aria-pressed": String(estado.tab === k), onclick: () => { estado.tab = k; estado.confirma = false; pintar(); }}, t, el("span", {class: "cuenta"}, String(n[k])))));
   let cartas;
@@ -1093,6 +1171,7 @@ function pintar() {
         el("span", {class: "pide normal"}, d),
         el("button", {class: "plano corto", type: "button", onclick: () => hacer(() => guardarLista(estado.lista.filter((x) => x !== d)), [], "Quitado de la lista")}, "Quitar")))));
   }
+  else if (estado.tab === "busca") cartas = [panelBusqueda()].concat(d.busca.map(cartaBusqueda), !d.busca.length && estado.buscado && !estado.buscando ? [el("p", {class: "pide"}, "No hay correos archivados con ese asunto o remitente.")] : []);
   else cartas = d[estado.tab].map(cartaSimple);
   if (estado.tab === "nuevo" && cartas.length) cartas.unshift(el("p", {class: "pide"}, "Recién llegados. El agente todavía no los ha clasificado; puedes abrirlos, contestarlos o archivarlos ya."));
   $("lista").replaceChildren(...(cartas.length ? cartas : [el("div", {class: "vacio"}, el("b", {}, "Nada pendiente aquí"), estado.tab === "nuevo" ? "No hay correos nuevos sin clasificar." : "La bandeja de entrada solo guarda lo que queda por resolver.")]));
@@ -1152,7 +1231,7 @@ function salir() {
   borrar("agente.contactos");
   Object.assign(estado, {propuestas: {}, resumenes: {}, editados: {}, redacta: null});
   guardar("agente.salio", true);
-  estado.datos = {nuevo: [], resp: [], news: [], arch: [], pend: []};
+  estado.datos = {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []};
   cerrar();
   pantallaInicio(false);
 }
