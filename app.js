@@ -220,6 +220,7 @@ async function cargar() {
     estado.datos = await listarTodo();
     estado.lista = await leerLista();
     if (estado.sel && !todos().some((m) => m.id === estado.sel)) cerrar();
+    if (enProceso.size) quitar(Array.from(enProceso));
     podarTrabajo();
   } catch (e) { avisar("No se ha podido leer el buzón: " + e.message); }
   $("recargar").disabled = false;
@@ -278,17 +279,45 @@ async function archivarSiempre(grupo) {
   if (!lista.includes(grupo.dir)) await guardarLista(lista.concat(grupo.dir));
   for (const m of grupo.items) await archivar(m);
 }
+// Enviar y archivar no hacen esperar: el correo sale de la lista al momento y Outlook se actualiza de fondo,
+// una acción detrás de otra. Si algo falla, el correo vuelve a su sitio con el aviso.
+let colaAcciones = Promise.resolve();
+const enProceso = new Set();
 async function hacer(tarea, ids, hecho, recargar) {
+  if (ids && ids.length) return hacerDeFondo(tarea, ids, hecho, recargar);
   const botones = document.querySelectorAll("button");
   botones.forEach((b) => (b.disabled = true));
   try {
     await tarea();
-    quitar(ids);
     if (hecho) avisar(hecho);
   } catch (e) { avisar("No se ha podido completar: " + e.message); }
   botones.forEach((b) => (b.disabled = false));
   pintar();
   if (recargar) await cargar();
+}
+function hacerDeFondo(tarea, ids, hecho, recargar) {
+  const sitio = [];
+  for (const k of Object.keys(estado.datos)) estado.datos[k].forEach((m, pos) => { if (ids.includes(m.id)) sitio.push([k, pos, m]); });
+  const abierto = ids.includes(estado.sel) ? estado.sel : null;
+  ids.forEach((x) => enProceso.add(x));
+  quitar(ids);
+  pintar();
+  avisar("En marcha…");
+  colaAcciones = colaAcciones.then(async () => {
+    try {
+      await tarea();
+      ids.forEach((x) => enProceso.delete(x));
+      if (hecho) avisar(hecho);
+      if (!estado.sel) pintar();
+      if (recargar && !estado.sel) cargar();
+    } catch (e) {
+      ids.forEach((x) => enProceso.delete(x));
+      for (const [k, pos, m] of sitio) if (!estado.datos[k].some((y) => y.id === m.id)) estado.datos[k].splice(Math.min(pos, estado.datos[k].length), 0, m);
+      avisar("No se ha podido completar: " + e.message);
+      if (abierto && !estado.sel) abrir(abierto); else pintar();
+    }
+  });
+  return colaAcciones;
 }
 
 // ---------- pantalla ----------
@@ -385,7 +414,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=21"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=22"});
   marco.html = html;
   marcos = marcos.filter((x) => x.isConnected).concat(marco);
   return marco;
@@ -773,7 +802,8 @@ async function enviarManual(m, r, archivarDespues) {
     body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(r.texto))},
     toRecipients: aLista(r.para), ccRecipients: aLista(r.cc)});
   await api("POST", `/me/messages/${id(nuevo.id)}/send`);
-  estado.redacta = null;
+  if (estado.redacta && estado.redacta.mid === m.id) estado.redacta = null;
+  delete estado.propuestas[m.id];
   if (archivarDespues) await archivar(m);
 }
 function barraOutlook(m) {
