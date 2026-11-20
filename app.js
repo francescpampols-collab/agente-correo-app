@@ -372,20 +372,29 @@ async function quienSoy() {
   if (estado.yo) return;
   try { const yo = await api("GET", "/me?$select=mail,userPrincipalName"); estado.yo = ((yo || {}).mail || (yo || {}).userPrincipalName || "").toLowerCase(); } catch (e) {}
 }
-let marco = null;
+// Marcos aislados abiertos ahora mismo (el correo y, si se ve, la firma).
+let marcos = [];
 window.addEventListener("message", (e) => {
-  if (!marco || e.source !== marco.contentWindow || !e.data) return;
+  const marco = marcos.find((x) => x.contentWindow === e.source);
+  if (!marco || !e.data) return;
   if (e.data.tipo === "listo" && !marco.enviado && marco.html) {
     marco.enviado = true;
     marco.contentWindow.postMessage({tipo: "correo", html: marco.html}, "*");
   } else if (e.data.tipo === "alto" && Number.isFinite(e.data.alto)) {
-    marco.style.height = Math.min(Math.max(e.data.alto, 80), 30000) + "px";
+    marco.style.height = Math.min(Math.max(e.data.alto, 40), 30000) + "px";
   }
 });
-function marcoCorreo(html) {
-  marco = el("iframe", {class: "marco", title: "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=20"});
+function marcoCorreo(html, titulo) {
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=21"});
   marco.html = html;
+  marcos = marcos.filter((x) => x.isConnected).concat(marco);
   return marco;
+}
+// Tu firma de Outlook tal como saldrá al final del correo.
+function vistaFirma() {
+  if (estado.firma == null) { leerFirma().then(() => { if (estado.firma) pintarDetalle(); }).catch(() => {}); return null; }
+  if (!estado.firma) return el("span", {class: "de"}, "No hay firma guardada: el correo saldrá sin ella.");
+  return el("div", {class: "firma"}, el("span", {class: "eti"}, "Tu firma (se añade al enviar)"), marcoCorreo(estado.firma, "Firma"));
 }
 async function descargar(mid, adj) {
   const r = await fetch(`${GRAPH}/me/messages/${id(mid)}/attachments/${id(adj.id)}/$value`, {headers: {Authorization: "Bearer " + await token(), Prefer: 'IdType="ImmutableId"'}});
@@ -690,7 +699,8 @@ function bloquePropuesta(m, esRespuesta) {
   return el("div", {class: "carta propuesta"},
     el("span", {class: "eti"}, "Propuesta de respuesta (" + x.modelo + ")"),
     el("p", {class: "cuerpo"}, x.texto),
-    el("span", {class: "de"}, "Para: " + (r().para.concat(r().cc).join(", ") || "sin destinatario") + ". Se añade tu firma de Outlook."),
+    vistaFirma(),
+    el("span", {class: "de"}, "Para: " + (r().para.concat(r().cc).join(", ") || "sin destinatario")),
     falta ? el("span", {class: "aviso"}, "Tiene huecos [FALTA: …]: edítala para completarlos") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => pedirTest(m)}, "No me convence"),
@@ -798,6 +808,7 @@ function panelManual(m) {
       el("label", {}, "Dile a la IA qué quieres contestar", idea),
       el("button", {class: "lleno corto", type: "button", onclick: redactar}, r.texto.trim() ? "Mejorar con IA" : "Redactar con IA")) : activarIA(),
     area,
+    vistaFirma(),
     /\[FALTA/i.test(r.texto) ? el("span", {class: "aviso"}, "Completa los huecos [FALTA: …] para poder enviar") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => hacer(() => enviarManual(m, r, false), [], "Enviado")}, "Enviar"),
@@ -851,6 +862,7 @@ function pintarDetalle() {
       el("span", {class: "eti"}, "Respuesta preparada" + (p.todos ? " (a todos)" : "")),
       destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
       area,
+      vistaFirma(),
       faltaDato(m) ? el("span", {class: "pide"}, "Completa los huecos [FALTA: …] para poder enviar.") : null,
       el("div", {class: "fila"},
         el("button", {class: "plano", type: "button", onclick: () => hacer(() => descartar(m), [m.id], "Borrador descartado; el correo queda en Tuyos")}, "Descartar"),
