@@ -7,13 +7,14 @@ if (window.top !== window.self) {
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const PROP = "String {00020329-0000-0000-C000-000000000046} Name AgenteCorreo";
+const PROP_LISTA = "String {00020329-0000-0000-C000-000000000046} Name AgenteCorreoSiempre";
 const CAT = {resp: "Agente: responder", news: "Agente: boletín", arch: "Agente: archivar", pend: "Agente: pendiente", baja: "Agente: baja", manual: "Agente: baja manual"};
 const PESTANAS = [["resp", "Responder"], ["news", "Boletines"], ["arch", "Archivar"], ["pend", "Tuyos"]];
 const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read";
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
-const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, confirma: false};
+const estado = {tab: "resp", sel: null, datos: {resp: [], news: [], arch: [], pend: []}, lista: [], confirma: false};
 
 // ---------- utilidades ----------
 function guardar(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -114,16 +115,30 @@ async function listar(cat) {
     "$filter": `categories/any(c:c eq '${cat}')`,
     "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink",
     "$expand": `singleValueExtendedProperties($filter=id eq '${PROP}')`,
-    "$top": "50",
+    "$top": "100",
   });
   const j = await api("GET", "/me/mailFolders/inbox/messages?" + q);
   return (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
 }
+// Remitentes de «archivar siempre»: se guardan en la propia Bandeja de entrada de Outlook.
+async function leerLista() {
+  const q = new URLSearchParams({"$select": "id", "$expand": `singleValueExtendedProperties($filter=id eq '${PROP_LISTA}')`});
+  const f = await api("GET", "/me/mailFolders/inbox?" + q);
+  try {
+    const v = JSON.parse((f.singleValueExtendedProperties || [])[0].value);
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch (e) { return []; }
+}
+async function guardarLista(lista) {
+  await api("PATCH", "/me/mailFolders/inbox", {singleValueExtendedProperties: [{id: PROP_LISTA, value: JSON.stringify(lista)}]});
+  estado.lista = lista;
+}
 async function cargar() {
   $("recargar").disabled = true;
   try {
-    const [resp, news, arch, pend, manual] = await Promise.all([CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual].map(listar));
+    const [resp, news, arch, pend, manual, lista] = await Promise.all([CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual].map(listar).concat(leerLista()));
     estado.datos = {resp, news, arch, pend: pend.concat(manual)};
+    estado.lista = lista;
     if (estado.sel && !todos().some((m) => m.id === estado.sel)) cerrar();
   } catch (e) { avisar("No se ha podido leer el buzón: " + e.message); }
   $("recargar").disabled = false;
@@ -138,7 +153,7 @@ function grupos() {
   const g = new Map();
   for (const m of estado.datos.news) {
     const k = dir(m) || de(m);
-    if (!g.has(k)) g.set(k, {nombre: de(m), items: []});
+    if (!g.has(k)) g.set(k, {nombre: de(m), dir: dir(m), items: []});
     g.get(k).items.push(m);
   }
   return [...g.values()];
@@ -174,7 +189,12 @@ async function pedirBaja(grupo) {
   const cats = (m.categories || []).filter((c) => !c.startsWith("Agente:")).concat(CAT.baja);
   await api("PATCH", `/me/messages/${id(m.id)}`, {categories: cats});
 }
-async function hacer(tarea, ids, hecho) {
+async function archivarSiempre(grupo) {
+  const lista = await leerLista();
+  if (!lista.includes(grupo.dir)) await guardarLista(lista.concat(grupo.dir));
+  for (const m of grupo.items) await archivar(m);
+}
+async function hacer(tarea, ids, hecho, recargar) {
   const botones = document.querySelectorAll("button");
   botones.forEach((b) => (b.disabled = true));
   try {
@@ -184,6 +204,7 @@ async function hacer(tarea, ids, hecho) {
   } catch (e) { avisar("No se ha podido completar: " + e.message); }
   botones.forEach((b) => (b.disabled = false));
   pintar();
+  if (recargar) await cargar();
 }
 
 // ---------- pantalla ----------
@@ -214,6 +235,7 @@ function cartaGrupo(g) {
     el("span", {class: "pide"}, g.items.length === 1 ? (g.items[0].subject || "1 correo") : g.items.length + " correos"),
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => hacer(async () => { for (const m of g.items) await archivar(m); }, ids, "Archivado")}, "Archivar"),
+      g.dir ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivarSiempre(g), ids, "Archivado. Lo nuevo de este remitente se archivará solo en cada pasada")}, "Archivar siempre") : null,
       el("button", {class: "plano peligro", type: "button", onclick: () => hacer(() => pedirBaja(g), ids, posible ? "La baja se tramita en la próxima pasada" : "Este boletín no admite baja automática: te aparecerá en Tuyos")}, "Dar de baja")));
 }
 function cartaSimple(m) {
@@ -268,7 +290,14 @@ function pintar() {
   $("pestanas").replaceChildren(...PESTANAS.map(([k, t]) => el("button", {type: "button", "aria-pressed": String(estado.tab === k), onclick: () => { estado.tab = k; estado.confirma = false; pintar(); }}, `${t} · ${n[k]}`)));
   let cartas;
   if (estado.tab === "resp") cartas = d.resp.map(cartaRespuesta);
-  else if (estado.tab === "news") cartas = g.map(cartaGrupo);
+  else if (estado.tab === "news") {
+    cartas = g.map(cartaGrupo);
+    if (estado.lista.length) cartas.push(el("div", {class: "carta"},
+      el("span", {class: "eti"}, "Se archivan siempre"),
+      ...estado.lista.map((d) => el("div", {class: "fila centro"},
+        el("span", {class: "pide normal"}, d),
+        el("button", {class: "plano corto", type: "button", onclick: () => hacer(() => guardarLista(estado.lista.filter((x) => x !== d)), [], "Quitado de la lista")}, "Quitar")))));
+  }
   else cartas = d[estado.tab].map(cartaSimple);
   $("lista").replaceChildren(...(cartas.length ? cartas : [el("div", {class: "vacio"}, el("b", {}, "Nada pendiente aquí"), "La bandeja de entrada solo guarda lo que queda por resolver.")]));
   pintarDetalle();
@@ -291,7 +320,7 @@ function pintar() {
   $("todo").onclick = !accion ? null : () => {
     if (!estado.confirma) { estado.confirma = true; pintar(); return; }
     estado.confirma = false;
-    hacer(accion, ids, "Hecho");
+    hacer(accion, ids, "Hecho", true);
   };
 }
 

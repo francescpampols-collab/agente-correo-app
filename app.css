@@ -32,6 +32,8 @@ main{flex:1;min-height:0;display:flex}
 .aviso{align-self:flex-start;font-size:12px;font-weight:600;color:var(--aviso);background:var(--avisoFondo);border-radius:6px;padding:4px 8px;overflow-wrap:anywhere}
 .fila{display:flex;gap:8px;flex-wrap:wrap}
 .fila>*{flex:1 1 0}
+.fila.centro{align-items:center;flex-wrap:nowrap}
+.fila>.corto{flex:0 0 auto}
 .vacio{margin-top:70px;text-align:center;color:var(--gris)}
 .vacio b{display:block;color:var(--tinta);font-size:20px;margin-bottom:6px}
 .eti{font-size:12px;font-weight:600;color:var(--gris);text-transform:uppercase;letter-spacing:.6px}
