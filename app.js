@@ -480,7 +480,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=45"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=46"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1030,7 +1030,14 @@ async function clasificarUno(m) {
   return {responder: "resp", boletin: "news", archivar: "arch", pendiente: "pend"}[tipo];
 }
 async function clasificarNuevos() {
-  if (clasificando || !leer("agente.ia") || leer("agente.salio")) return;
+  if (clasificando || leer("agente.salio")) return;
+  // Los avisos de GitHub sobre el propio agente no se enseñan: se archivan sin más (no hace falta la IA).
+  const avisos = todos().filter((m) => avisoPropio(m) && !enProceso.has(m.id) && !clasificados.has(m.id));
+  if (avisos.length) {
+    avisos.forEach((m) => clasificados.add(m.id));
+    hacerDeFondo(async () => { for (const m of avisos) { await api("PATCH", `/me/messages/${id(m.id)}`, {isRead: true}); await archivar(m); } }, avisos.map((m) => m.id), "");
+  }
+  if (!leer("agente.ia")) return;
   const cola = (estado.datos.nuevo || []).filter((m) => !clasificados.has(m.id) && !enProceso.has(m.id) && !avisoPropio(m)).slice(0, 8);
   if (!cola.length) return;
   clasificando = true;
