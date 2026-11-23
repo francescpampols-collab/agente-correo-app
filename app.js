@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=64".slice(2));
+const VERSION = Number("v=65".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -214,23 +214,24 @@ async function listarTodo() {
     "$top": "200",
   });
   // Los ya clasificados y los recién llegados se piden a la vez.
-  const recientes = api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,isRead,conversationId", "$orderby": "receivedDateTime desc", "$top": "50"})).catch(() => null);
+  const recientes = api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,isRead,conversationId", "$expand": "singleValueExtendedProperties($filter=id eq 'Integer 0x1081')", "$orderby": "receivedDateTime desc", "$top": "50"})).catch(() => null);
   const j = await api("GET", "/me/mailFolders/inbox/messages?" + q);
   const lista = (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
   // 0x1081 es la marca de Outlook de «respondido / reenviado»; se aparta para que no estorbe a la propiedad del agente.
-  for (const m of lista) {
+  const apartarVerbo = (m) => {
     const todas = m.singleValueExtendedProperties || [];
     const verbo = todas.find((x) => /^Integer/i.test(x.id || ""));
     m.verbo = verbo ? Number(verbo.value) : 0;
     m.singleValueExtendedProperties = todas.filter((x) => !/^Integer/i.test(x.id || ""));
-  }
+  };
+  lista.forEach(apartarVerbo);
   await completar(lista);
   // Lo recién llegado que el agente aún no ha clasificado: se enseña ya, sin esperar a su siguiente pasada.
   let nuevo = [];
   try {
     const r = await recientes;
     nuevo = ((r && r.value) || []).filter((m) => !(m.categories || []).some((c) => c.startsWith("Agente:")));
-    nuevo.forEach((m) => { m.sinClasificar = true; });
+    nuevo.forEach((m) => { apartarVerbo(m); m.sinClasificar = true; });
   } catch (e) {}
   const de = (e) => lista.filter((m) => (m.categories || []).includes(e));
   return {nuevo, resp: de(CAT.resp), news: de(CAT.news).concat(de(CAT.baja)), arch: de(CAT.arch), pend: de(CAT.pend).concat(de(CAT.manual))};
@@ -569,7 +570,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=64"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=65"});
   marco.html = html;
   marcos.push(marco);
   return marco;
