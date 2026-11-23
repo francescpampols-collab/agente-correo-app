@@ -31,13 +31,32 @@ function borrar(k) { try { localStorage.removeItem(k); } catch (e) {} }
 // Lo que está a medias (propuestas, test, borradores, resúmenes y el correo abierto) se guarda en el
 // dispositivo para que recargar la página no lo borre. «Salir» lo elimina.
 let relojTrabajo;
+// También se guarda por dónde ibas (pestaña, correo abierto y altura de la lista): si el móvil recarga
+// la página al volver de ver un adjunto, vuelves al mismo sitio.
+const lugar = {y: 0, yd: 0, tab: ""};
+let restaurando = true;
+function guardarYa() {
+  clearTimeout(relojTrabajo);
+  const propuestas = {};
+  for (const [k, x] of Object.entries(estado.propuestas)) if (x && x.fase !== "cargando") propuestas[k] = x; else if (x && x.texto) propuestas[k] = Object.assign({}, x, {fase: "lista"});
+  const lista = document.getElementById("lista"), detalle = document.getElementById("detalle");
+  if (!restaurando) { lugar.y = lista ? lista.scrollTop : 0; lugar.yd = detalle ? detalle.scrollTop : 0; lugar.tab = estado.tab; }
+  guardar("agente.trabajo", {propuestas, resumenes: estado.resumenes, editados: estado.editados, redacta: estado.redacta, sel: estado.sel, tab: estado.tab, soloTexto: !!estado.soloTexto, y: lugar.y, yd: lugar.yd, ytab: lugar.tab});
+}
 function guardarTrabajo() {
   clearTimeout(relojTrabajo);
-  relojTrabajo = setTimeout(() => {
-    const propuestas = {};
-    for (const [k, x] of Object.entries(estado.propuestas)) if (x && x.fase !== "cargando") propuestas[k] = x; else if (x && x.texto) propuestas[k] = Object.assign({}, x, {fase: "lista"});
-    guardar("agente.trabajo", {propuestas, resumenes: estado.resumenes, editados: estado.editados, redacta: estado.redacta, sel: estado.sel, tab: estado.tab, soloTexto: !!estado.soloTexto});
-  }, 250);
+  relojTrabajo = setTimeout(guardarYa, 250);
+}
+// Vuelve a la altura guardada. El contenido llega por partes, así que se repite un par de veces.
+function volverAlLugar() {
+  const poner = () => {
+    const lista = document.getElementById("lista"), detalle = document.getElementById("detalle");
+    if (lista && lugar.tab === estado.tab && lugar.y) lista.scrollTop = lugar.y;
+    if (detalle && estado.sel && lugar.yd) detalle.scrollTop = lugar.yd;
+  };
+  poner();
+  setTimeout(poner, 600);
+  setTimeout(() => { poner(); restaurando = false; }, 1800);
 }
 function recuperarTrabajo() {
   const t = leer("agente.trabajo");
@@ -46,6 +65,7 @@ function recuperarTrabajo() {
   if (t.redacta && typeof t.redacta === "object" && Array.isArray(t.redacta.para) && Array.isArray(t.redacta.cc) && MODOS[t.redacta.modo]) estado.redacta = t.redacta;
   if (PESTANAS.some(([k]) => k === t.tab)) estado.tab = t.tab;
   estado.soloTexto = !!t.soloTexto;
+  lugar.y = Number(t.y) || 0; lugar.yd = Number(t.yd) || 0; lugar.tab = typeof t.ytab === "string" ? t.ytab : "";
   return typeof t.sel === "string" ? t.sel : null;
 }
 // Tras leer el buzón, se tira lo guardado de correos que ya no están.
@@ -55,6 +75,10 @@ function podarTrabajo() {
   if (estado.redacta && !vivos.has(estado.redacta.mid)) estado.redacta = null;
 }
 document.addEventListener("input", guardarTrabajo);
+document.addEventListener("scroll", guardarTrabajo, true);
+// Al pasar a segundo plano se guarda al instante: el móvil puede descartar la página sin avisar.
+document.addEventListener("visibilitychange", () => { if (document.hidden) guardarYa(); });
+window.addEventListener("pagehide", guardarYa);
 // Si aún hay envíos o archivados a medio guardar, el navegador avisa antes de cerrar o recargar.
 window.addEventListener("beforeunload", (e) => { if (enProceso.size) { e.preventDefault(); e.returnValue = ""; } });
 function el(tag, attrs, ...hijos) {
@@ -501,7 +525,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=47"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=48"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1550,6 +1574,7 @@ async function arrancar() {
   pintar();
   await cargar();
   if (abierto && todos().some((m) => m.id === abierto)) abrir(abierto);
+  volverAlLugar();
   setInterval(() => { if (!document.hidden && !estado.sel && !leer("agente.salio")) cargar(); }, 120000);
 }
 arrancar();
