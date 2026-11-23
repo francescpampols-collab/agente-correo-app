@@ -191,12 +191,12 @@ async function listarTodo() {
   const etiquetas = [CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual, CAT.baja];
   const q = new URLSearchParams({
     "$filter": etiquetas.map((e) => `categories/any(c:c eq '${e}')`).join(" or "),
-    "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,isRead",
+    "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,isRead,conversationId",
     "$expand": `singleValueExtendedProperties($filter=id eq '${PROP}' or id eq 'Integer 0x1081')`,
     "$top": "200",
   });
   // Los ya clasificados y los recién llegados se piden a la vez.
-  const recientes = api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,isRead", "$orderby": "receivedDateTime desc", "$top": "50"})).catch(() => null);
+  const recientes = api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,isRead,conversationId", "$orderby": "receivedDateTime desc", "$top": "50"})).catch(() => null);
   const j = await api("GET", "/me/mailFolders/inbox/messages?" + q);
   const lista = (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
   // 0x1081 es la marca de Outlook de «respondido / reenviado»; se aparta para que no estorbe a la propiedad del agente.
@@ -321,6 +321,7 @@ async function cargar() {
   $("recargar").disabled = false;
   pintar();
   if (estado.cargado) reintentarSalida();
+  cargarRespuestas().catch(() => {});
   quienSoy().then(listarAdjuntos).then(() => { precargarFicheros(); prepararVisor(); return precargar(); }).then(cargarContactos).then(clasificarNuevos).catch(() => {});
 }
 function todos() { return [].concat(estado.datos.busca || [], estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
@@ -550,7 +551,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=55"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=56"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -782,6 +783,7 @@ function cartaRespuesta(m) {
     remitente(m),
     titulo(m),
     marcas(m),
+    respuestaMia(m),
     filaAdjuntos(m),
     resumenDesplegable(m),
     p.pide ? el("p", {class: "pide"}, "Pide: " + p.pide) : null,
@@ -881,6 +883,7 @@ function cartaBusqueda(m) {
     titulo(m),
     el("span", {class: "de"}, fechaCorta(m.receivedDateTime) + ", guardado en " + m.carpeta),
     marcas(m),
+    respuestaMia(m),
     filaAdjuntos(m),
     extracto(m) ? el("p", {class: "pide"}, extracto(m).slice(0, 180)) : null,
     el("div", {class: "fila"},
@@ -951,6 +954,62 @@ function resumenDesplegable(m) {
 // Lo que ya has hecho con un correo, a la vista en la lista y al abrirlo.
 const CAT_HECHO = {responder: "Respondido", todos: "Respondido", reenviar: "Reenviado"};
 const CAT_PUESTA = "Reacción puesta: ";
+// ---------- lo que tú contestaste ----------
+// De cada correo ya respondido o reenviado se busca en Enviados tu mensaje del mismo hilo,
+// para tenerlo a mano en la tarjeta sin ir a Outlook.
+function respondido(m) {
+  const cats = m.categories || [];
+  return cats.includes("Respondido") || cats.includes("Reenviado") || [102, 103, 104].includes(m.verbo);
+}
+async function cargarRespuestas() {
+  if (!estado.respuestas) estado.respuestas = {};
+  const faltan = todos().filter((m) => m.conversationId && respondido(m) && !estado.respuestas[m.id]);
+  const ruta = (m, campo) => "/me/mailFolders/sentitems/messages?$filter=" + encodeURIComponent(`conversationId eq '${String(m.conversationId).replace(/'/g, "''")}'`) + `&$select=id,subject,sentDateTime,toRecipients,${campo}&$top=15`;
+  for (let i = 0; i < faltan.length; i += 4) {
+    const grupo = faltan.slice(i, i + 4);
+    for (const campo of ["uniqueBody", "bodyPreview"]) {
+      const quedan = grupo.filter((m) => !estado.respuestas[m.id]);
+      if (!quedan.length) break;
+      try {
+        const res = await api("POST", "/$batch", {requests: quedan.map((m, k) => ({id: String(k), method: "GET", url: ruta(m, campo), headers: {Prefer: 'IdType="ImmutableId", outlook.body-content-type="text"'}}))});
+        for (const x of (res && res.responses) || []) {
+          const m = quedan[Number(x.id)];
+          if (!m || x.status !== 200 || !x.body) continue;
+          estado.respuestas[m.id] = (x.body.value || [])
+            .filter((e) => (e.sentDateTime || "") >= (m.receivedDateTime || ""))
+            .sort((a, b) => (a.sentDateTime || "").localeCompare(b.sentDateTime || ""))
+            .map((e) => ({fecha: e.sentDateTime, asunto: e.subject || "", para: (e.toRecipients || []).map((t) => (t.emailAddress || {}).name || (t.emailAddress || {}).address || "").filter(Boolean),
+              texto: limpiarMio(((e.uniqueBody || {}).content) || e.bodyPreview || "")}));
+        }
+      } catch (e) {}
+    }
+    refrescarLista();
+    if (estado.sel && grupo.some((m) => m.id === estado.sel)) pintarDetalle();
+  }
+}
+// Tu texto, sin la firma corporativa ni huecos de sobra.
+function limpiarMio(t) {
+  let x = String(t || "").replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const firma = x.search(/\n\s*Francesc(\s+Xavier)?\s+P[aà]mpols[^\n]*\n/i);
+  if (firma > 20) x = x.slice(0, firma).trim();
+  return x.slice(0, 4000);
+}
+function fechaHora(iso) { const f = new Date(iso); return isNaN(f) ? "" : f.toLocaleString("es-ES", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"}); }
+function respuestaMia(m) {
+  const lista = estado.respuestas && estado.respuestas[m.id];
+  if (!lista || !lista.length) return null;
+  const ultima = lista[lista.length - 1];
+  if (!estado.miaAbierta) estado.miaAbierta = {};
+  const d = el("details", {class: "resumen-ext mia"},
+    el("summary", {}, (/^(fw|rv|fwd)\s*:/i.test(ultima.asunto) ? "Lo que reenviaste" : "Lo que contestaste") + " · " + fechaHora(ultima.fecha) + (ultima.para.length ? " · a " + ultima.para.slice(0, 2).join(", ") + (ultima.para.length > 2 ? " y " + (ultima.para.length - 2) + " más" : "") : "")),
+    ...lista.map((e) => el("div", {class: "mio"},
+      lista.length > 1 ? el("span", {class: "de"}, fechaHora(e.fecha) + (e.para.length ? " · a " + e.para.slice(0, 3).join(", ") : "")) : null,
+      el("p", {class: "cuerpo"}, e.texto || "(sin texto: solo el correo reenviado o la firma)"))));
+  d.open = !!estado.miaAbierta[m.id];
+  d.addEventListener("toggle", () => { estado.miaAbierta[m.id] = d.open; });
+  d.addEventListener("click", (e) => e.stopPropagation());
+  return d;
+}
 function marcas(m) {
   const cats = m.categories || [], lista = [];
   if (cats.includes("Respondido") || m.verbo === 102 || m.verbo === 103) lista.push(["hecho", "Respondido"]);
@@ -971,6 +1030,7 @@ function cartaSimple(m) {
     remitente(m),
     titulo(m),
     marcas(m),
+    respuestaMia(m),
     filaAdjuntos(m),
     resumenDesplegable(m),
     p.pide ? el("p", {class: "pide"}, p.pide) : m.sinClasificar && extracto(m) ? el("p", {class: "pide"}, extracto(m).slice(0, 180)) : null,
@@ -1147,7 +1207,13 @@ async function leerEstilo() {
 }
 function correoParaIA(m) {
   const c = estado.cuerpos[m.id] || {};
-  return `De: ${de(m)} <${dir(m)}>\nAsunto: ${m.subject || ""}\nPara: ${(c.a || []).join(", ")}\nCC: ${(c.cc || []).join(", ")}\n<correo>\n${(c.texto || "").slice(0, 24000)}\n</correo>`;
+  return `De: ${de(m)} <${dir(m)}>\nAsunto: ${m.subject || ""}\nPara: ${(c.a || []).join(", ")}\nCC: ${(c.cc || []).join(", ")}\n<correo>\n${(c.texto || "").slice(0, 24000)}\n</correo>${miaParaIA(m)}`;
+}
+// Si Francesc ya contestó, la IA lo sabe: lo tiene en cuenta al resumir y no propone repetirlo.
+function miaParaIA(m) {
+  const lista = estado.respuestas && estado.respuestas[m.id];
+  if (!lista || !lista.length) return "";
+  return "\n" + lista.map((e) => `<respuesta_ya_enviada_por_francesc fecha="${e.fecha}" para="${e.para.join(", ").replace(/"/g, "'")}">\n${e.texto.slice(0, 3000)}\n</respuesta_ya_enviada_por_francesc>`).join("\n") + "\nFrancesc ya envió lo anterior en este hilo: tenlo en cuenta (qué quedó contestado y qué sigue abierto).";
 }
 function aBase64(blob) {
   return new Promise((ok, mal) => { const f = new FileReader(); f.onload = () => ok(String(f.result).split(",")[1] || ""); f.onerror = () => mal(new Error("no se ha podido leer el adjunto")); f.readAsDataURL(blob); });
@@ -1588,6 +1654,7 @@ function pintarDetalle() {
       c ? lineasDestino(c.a || [], c.cc || []) : null,
       c && c.fecha ? el("div", {class: "de"}, fechaLarga(c.fecha)) : null,
       marcas(m),
+      respuestaMia(m),
       filaAdjuntos(m),
       barraOutlook(m),
       estado.carpetaArriba ? selectorCarpeta(m) : null,

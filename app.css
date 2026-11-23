@@ -262,3 +262,9 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .barra{flex-wrap:wrap}
 .barra .accion{flex:1 1 104px}
 .accion.verde{color:var(--verde)}
+
+/* Lo que contestaste: mismo desplegable que el resumen, en verde */
+.resumen-ext.mia{border-left-color:var(--verde);background:#EEF6F1}
+.resumen-ext.mia summary{color:var(--verde)}
+.mio{display:flex;flex-direction:column;gap:4px;padding:6px 0 2px}
+.mio .cuerpo{font-size:15px;max-width:none}
