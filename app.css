@@ -241,3 +241,13 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 
 .carpetas{margin-top:10px;padding:12px;border:1px solid var(--linea);border-radius:10px;background:#F3F6FA}
 .carpetas .opciones{margin-top:8px}
+
+/* Visor de adjuntos: encima de todo, la app sigue como estaba debajo */
+.visor{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;background:#55606E}
+.visor-barra{display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top)) 12px 8px;background:var(--marino);border-bottom:4px solid var(--kraft)}
+.visor-barra .plano{flex:0 0 auto;min-height:42px;padding:0 14px;background:transparent;color:#fff;border-color:rgba(255,255,255,.45)}
+.visor-barra .corto{min-width:44px;padding:0;font-size:22px;line-height:1}
+.visor-nombre{flex:1;min-width:0;color:#fff;font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.visor-paginas{flex:1;overflow:auto;padding:8px;display:flex;flex-direction:column;align-items:flex-start;gap:8px;-webkit-overflow-scrolling:touch}
+.visor-paginas .pide{color:#fff;margin:20px auto}
+.visor-pagina{display:block;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.35);margin:0 auto;flex:0 0 auto}

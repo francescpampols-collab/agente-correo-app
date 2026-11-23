@@ -548,7 +548,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=51"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=52"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -586,12 +586,104 @@ async function descargar(mid, adj) {
     window.agenteAndroid.postMessage(JSON.stringify({tipo: "fichero", nombre: adj.name || "adjunto", mime: adj.contentType || fichero.type || "", datos: await aBase64(fichero)}));
     return;
   }
+  // En el navegador, los PDF y las imágenes se ven dentro de la propia app, sin abrir otra pestaña.
+  const nombre = adj.name || "adjunto", tipo = (adj.contentType || fichero.type || "").toLowerCase();
+  const esPdf = tipo === "application/pdf" || /\.pdf$/i.test(nombre);
+  const esImagen = /^image\/(png|jpe?g|gif|webp|bmp)$/.test(tipo) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(nombre);
+  if (esPdf || esImagen) { verEnVisor(fichero, nombre, esPdf); return; }   // sin esperar al dibujo: no debe frenar otras acciones
+  guardarFichero(fichero, nombre);
+}
+// PDF e imágenes se ven dentro de la app (en la aplicación Android los abre el propio móvil).
+function seVeAqui(adj) {
+  const nombre = adj.name || "", tipo = (adj.contentType || "").toLowerCase();
+  return !(window.agenteApk && window.agenteAndroid) && (tipo === "application/pdf" || /^image\/(png|jpe?g|gif|webp|bmp)$/.test(tipo) || /\.(pdf|png|jpe?g|gif|webp|bmp)$/i.test(nombre));
+}
+function guardarFichero(fichero, nombre) {
   const url = URL.createObjectURL(fichero);
-  const a = el("a", {href: url, download: adj.name});
+  const a = el("a", {href: url, download: nombre});
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+// ---------- visor de adjuntos ----------
+// Se pinta encima de la app (que se queda como estaba debajo). La librería de PDF es pdf.js de Mozilla,
+// servida desde la propia app; se carga solo la primera vez que hace falta.
+const PDFJS = "3.11.174";
+let pdfListo = null, visor = null;
+function cargarPdfjs() {
+  if (!pdfListo) pdfListo = new Promise((ok, mal) => {
+    const guion = el("script", {src: `pdfjs/pdf.min.js?v=${PDFJS}`});
+    guion.onload = () => { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = `pdfjs/pdf.worker.min.js?v=${PDFJS}`; ok(window.pdfjsLib); } catch (e) { pdfListo = null; mal(e); } };
+    guion.onerror = () => { pdfListo = null; guion.remove(); mal(new Error("no se ha podido cargar el visor")); };
+    document.head.append(guion);
+  });
+  return pdfListo;
+}
+function cerrarVisor(desdeAtras) {
+  if (!visor) return;
+  const v = visor;
+  visor = null;
+  try { if (v.doc) v.doc.destroy(); } catch (e) {}
+  v.nodo.remove();
+  // La entrada del historial que se añadió al abrir se retira, salvo que ya se haya ido con «atrás».
+  if (desdeAtras !== true && history.state && history.state.visor) history.back();
+}
+window.addEventListener("popstate", () => cerrarVisor(true));
+async function pintarPaginas() {
+  const v = visor;
+  if (!v) return;
+  const turno = ++v.turno, caja = v.paginas, ancho = Math.max(200, caja.clientWidth - 16), ppp = Math.min(window.devicePixelRatio || 1, 2);
+  const lienzo = (w, h) => { const c = el("canvas", {class: "visor-pagina"}); c.width = Math.round(w * ppp); c.height = Math.round(h * ppp); c.style.width = Math.round(w) + "px"; c.style.height = Math.round(h) + "px"; return c; };
+  const nuevos = [];
+  if (v.imagen) {
+    const k = Math.min(1, ancho / v.imagen.width) * v.escala, c = lienzo(v.imagen.width * k, v.imagen.height * k);
+    c.getContext("2d").drawImage(v.imagen, 0, 0, c.width, c.height);
+    caja.replaceChildren(c);
+    return;
+  }
+  const total = Math.min(v.doc.numPages, 80);
+  for (let n = 1; n <= total; n++) {
+    const pagina = await v.doc.getPage(n);
+    if (visor !== v || v.turno !== turno) return;
+    const vista = pagina.getViewport({scale: ancho / pagina.getViewport({scale: 1}).width * v.escala});
+    const c = lienzo(vista.width, vista.height);
+    if (n === 1) caja.replaceChildren(c); else caja.append(c);
+    nuevos.push(c);
+    await pagina.render({canvasContext: c.getContext("2d"), viewport: vista, transform: ppp !== 1 ? [ppp, 0, 0, ppp, 0, 0] : null}).promise;
+    if (visor !== v || v.turno !== turno) return;
+  }
+  if (v.doc.numPages > total) caja.append(el("p", {class: "pide"}, `Se muestran las primeras ${total} páginas de ${v.doc.numPages}. Usa «Descargar» para verlo entero.`));
+}
+async function verEnVisor(fichero, nombre, esPdf) {
+  cerrarVisor();
+  const paginas = el("div", {class: "visor-paginas"}, el("p", {class: "pide"}, "Abriendo…"));
+  const escalar = (k) => { if (!visor) return; visor.escala = Math.min(4, Math.max(0.5, visor.escala * k)); pintarPaginas().catch(() => {}); };
+  const nodo = el("div", {class: "visor", role: "dialog", "aria-modal": "true", "aria-label": nombre},
+    el("div", {class: "visor-barra"},
+      el("button", {class: "plano", type: "button", onclick: () => cerrarVisor()}, "‹ Volver"),
+      el("span", {class: "visor-nombre"}, nombre),
+      el("button", {class: "plano corto", type: "button", "aria-label": "Reducir", onclick: () => escalar(1 / 1.4)}, "−"),
+      el("button", {class: "plano corto", type: "button", "aria-label": "Ampliar", onclick: () => escalar(1.4)}, "+"),
+      el("button", {class: "plano", type: "button", onclick: () => guardarFichero(fichero, nombre)}, "Descargar")),
+    paginas);
+  document.body.append(nodo);
+  const v = visor = {nodo, paginas, doc: null, imagen: null, escala: 1, turno: 0};
+  history.pushState({visor: true}, "");
+  try {
+    if (esPdf) {
+      const lib = await cargarPdfjs();
+      const doc = await lib.getDocument({data: await fichero.arrayBuffer(), isEvalSupported: false}).promise;
+      if (visor !== v) { doc.destroy(); return; }
+      v.doc = doc;
+    } else {
+      v.imagen = await createImageBitmap(fichero);
+      if (visor !== v) return;
+    }
+    await pintarPaginas();
+  } catch (e) {
+    if (visor === v) paginas.replaceChildren(el("p", {class: "pide"}, "No se ha podido mostrar aquí. Pulsa «Descargar» para abrirlo fuera."));
+  }
 }
 // La lista de adjuntos de cada correo se pide aparte y de golpe (ligera), sin esperar a traer el correo entero.
 async function listarAdjuntos() {
@@ -774,7 +866,7 @@ function filaAdjuntos(m) {
   if (sabidos) {
     const lista = sabidos.filter((a) => !a.incrustado && !a.isInline);
     if (!lista.length) return null;
-    return el("div", {class: "adjuntos"}, ...lista.map((a) => el("button", {class: "adjunto" + (a.listo ? " listo" : ""), type: "button", title: a.listo ? "Abrir" : "Descargar y abrir", onclick: () => { if (!a.listo) avisar("Descargando " + a.name + "…"); hacer(() => descargar(m.id, a), [], "Descargado: " + a.name + ". Ábrelo desde el aviso de descargas."); }},
+    return el("div", {class: "adjuntos"}, ...lista.map((a) => el("button", {class: "adjunto" + (a.listo ? " listo" : ""), type: "button", title: a.listo ? "Abrir" : "Descargar y abrir", onclick: () => { if (!a.listo) avisar("Descargando " + a.name + "…"); hacer(() => descargar(m.id, a), [], seVeAqui(a) ? "" : "Descargado: " + a.name + ". Ábrelo desde el aviso de descargas."); }},
       icono("clip"), el("span", {}, a.name), el("span", {class: "peso"}, tamano(a.size) + (a.listo ? ", listo" : "")))));
   }
   if (!m.hasAttachments) return null;
