@@ -551,7 +551,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=57"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=58"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1633,10 +1633,28 @@ function panelManual(m) {
 }
 // Como append, pero sin los huecos: append(null) escribiría la palabra «null».
 function poner(nodo, ...hijos) { for (const h of hijos) if (h != null) nodo.append(h); }
+// El correo abierto se reconstruye a menudo (llega un adjunto, cambia una marca…). El recuadro con el
+// contenido del correo NO se vuelve a crear si es el mismo: si se recreara, el marco se quedaría en blanco
+// y recargándose cada vez, que es lo que hacía saltar la pantalla.
+function sincronizar(cont, nuevos) {
+  const viejos = new Map();
+  for (const n of Array.from(cont.children)) if (n.dataset && n.dataset.clave) viejos.set(n.dataset.clave, n);
+  const lista = nuevos.map((n) => (n.dataset && n.dataset.clave && viejos.get(n.dataset.clave)) || n);
+  const quedan = new Set(lista);
+  for (const n of Array.from(cont.childNodes)) if (!quedan.has(n)) n.remove();
+  let ref = cont.firstChild;
+  for (const n of lista) {
+    if (n === ref) ref = ref.nextSibling;
+    else cont.insertBefore(n, ref);
+  }
+}
 function pintarDetalle() {
   guardarTrabajo();
-  const d = $("detalle");
-  d.replaceChildren();
+  const taller = document.createElement("div");
+  construirDetalle(taller);
+  sincronizar($("detalle"), Array.from(taller.childNodes));
+}
+function construirDetalle(d) {
   const m = todos().find((x) => x.id === estado.sel);
   if (!m) {
     poner(d, el("div", {class: "vacio"}, el("b", {}, "Elige un correo"), "Pulsa cualquier correo de la lista para leerlo aquí."));
@@ -1663,7 +1681,7 @@ function pintarDetalle() {
     bloquePropuesta(m, esRespuesta),
     bloqueResumen(m, p, c),
     p.aviso ? el("span", {class: "aviso"}, (esRespuesta ? "Revisar bien: " : "") + p.aviso) : null,
-    el("div", {class: "carta correo"},
+    el("div", Object.assign({class: "carta correo"}, c && !c.error && c.html && !estado.soloTexto ? {"data-clave": `correo|${m.id}|${c.html.length}`} : {}),
       el("span", {class: "eti"}, "Correo"),
       !c ? el("p", {class: "pide"}, "Cargando…")
         : c.error ? el("p", {class: "pide"}, "No se ha podido cargar el correo: " + c.error)
