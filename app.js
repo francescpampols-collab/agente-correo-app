@@ -321,7 +321,7 @@ async function cargar() {
   $("recargar").disabled = false;
   pintar();
   if (estado.cargado) reintentarSalida();
-  quienSoy().then(listarAdjuntos).then(() => { precargarFicheros(); return precargar(); }).then(cargarContactos).then(clasificarNuevos).catch(() => {});
+  quienSoy().then(listarAdjuntos).then(() => { precargarFicheros(); prepararVisor(); return precargar(); }).then(cargarContactos).then(clasificarNuevos).catch(() => {});
 }
 function todos() { return [].concat(estado.datos.busca || [], estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
 function quitar(ids) {
@@ -548,7 +548,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=52"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=53"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -610,15 +610,29 @@ function guardarFichero(fichero, nombre) {
 // Se pinta encima de la app (que se queda como estaba debajo). La librería de PDF es pdf.js de Mozilla,
 // servida desde la propia app; se carga solo la primera vez que hace falta.
 const PDFJS = "3.11.174";
-let pdfListo = null, visor = null;
+let pdfListo = null, pdfMotor = null, visor = null;
 function cargarPdfjs() {
   if (!pdfListo) pdfListo = new Promise((ok, mal) => {
     const guion = el("script", {src: `pdfjs/pdf.min.js?v=${PDFJS}`});
-    guion.onload = () => { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = `pdfjs/pdf.worker.min.js?v=${PDFJS}`; ok(window.pdfjsLib); } catch (e) { pdfListo = null; mal(e); } };
+    guion.onload = () => {
+      try {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = `pdfjs/pdf.worker.min.js?v=${PDFJS}`;
+        // Un único motor de PDF para toda la sesión: se arranca ya y se reutiliza en cada adjunto.
+        try { pdfMotor = new window.pdfjsLib.PDFWorker({name: "visor"}); } catch (e) { pdfMotor = null; }
+        ok(window.pdfjsLib);
+      } catch (e) { pdfListo = null; mal(e); }
+    };
     guion.onerror = () => { pdfListo = null; guion.remove(); mal(new Error("no se ha podido cargar el visor")); };
     document.head.append(guion);
   });
   return pdfListo;
+}
+// El visor de PDF se descarga por detrás al abrir la app (si hay algún PDF en la bandeja),
+// para que el primer adjunto se abra sin esperas.
+function prepararVisor() {
+  if (window.agenteApk && window.agenteAndroid) return;
+  const hayPdf = todos().some((m) => (estado.adjuntos[m.id] || []).some((a) => /\.pdf$/i.test(a.name || "") || a.contentType === "application/pdf"));
+  if (hayPdf) setTimeout(() => cargarPdfjs().catch(() => {}), 1500);
 }
 function cerrarVisor(desdeAtras) {
   if (!visor) return;
@@ -673,7 +687,7 @@ async function verEnVisor(fichero, nombre, esPdf) {
   try {
     if (esPdf) {
       const lib = await cargarPdfjs();
-      const doc = await lib.getDocument({data: await fichero.arrayBuffer(), isEvalSupported: false}).promise;
+      const doc = await lib.getDocument(Object.assign({data: await fichero.arrayBuffer(), isEvalSupported: false}, pdfMotor && !pdfMotor.destroyed ? {worker: pdfMotor} : {})).promise;
       if (visor !== v) { doc.destroy(); return; }
       v.doc = doc;
     } else {
