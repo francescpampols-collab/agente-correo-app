@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=62".slice(2));
+const VERSION = Number("v=63".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -569,7 +569,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=62"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=63"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -917,7 +917,32 @@ function panelBusqueda() {
   campo.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); buscar(); } });
   return el("div", {class: "carta buscador"},
     el("label", {}, "Buscar en los correos archivados", campo),
-    el("button", {class: "lleno", type: "button", disabled: estado.buscando ? "" : null, onclick: buscar}, estado.buscando ? "Buscando…" : "Buscar"));
+    el("button", {class: "lleno", type: "button", disabled: estado.buscando ? "" : null, onclick: buscar}, estado.buscando ? "Buscando…" : "Buscar"),
+    leer("agente.ia") ? el("button", {class: "enlace izquierda", type: "button", onclick: probarModelos}, "Probar los modelos de IA") : null);
+}
+// Diagnóstico: una pregunta mínima a cada modelo con tu clave, para ver cuál responde, cuánto tarda
+// y, si falla, qué dice Anthropic. Gasta unas pocas fichas, una sola vez.
+async function probarModelos() {
+  const clave = leer("agente.ia");
+  if (!clave) { avisar("Activa antes la IA en este dispositivo"); return; }
+  const lineas = el("div", {class: "visor-paginas prueba"}, el("p", {class: "pide"}, "Probando…"));
+  const nodo = el("div", {class: "visor", role: "dialog", "aria-modal": "true", "aria-label": "Prueba de los modelos de IA"},
+    el("div", {class: "visor-barra"}, el("button", {class: "plano", type: "button", onclick: () => nodo.remove()}, "‹ Volver"), el("span", {class: "visor-nombre"}, "Prueba de los modelos de IA")),
+    lineas);
+  document.body.append(nodo);
+  const filas = [];
+  for (const modelo of ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]) {
+    const t0 = performance.now();
+    let resultado;
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {method: "POST", headers: {"content-type": "application/json", "x-api-key": clave, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true"},
+        body: JSON.stringify({model: modelo, max_tokens: 20, messages: [{role: "user", content: "Responde solo con la palabra: ok"}]})});
+      const j = await r.json().catch(() => null);
+      resultado = r.ok ? "Funciona" : `Falla (${r.status}${j && j.error ? " · " + j.error.type + ": " + String(j.error.message || "").slice(0, 200) : ""})`;
+    } catch (e) { resultado = "Sin conexión: " + String(e.message || e).slice(0, 120); }
+    filas.push(el("p", {class: "pide"}, el("b", {}, (IA_NOMBRES[modelo] || modelo) + ": "), resultado + " · " + ((performance.now() - t0) / 1000).toFixed(1).replace(".", ",") + " s"));
+    lineas.replaceChildren(...filas, el("p", {class: "pide"}, filas.length < 4 ? "Probando el siguiente…" : "Hecho. Haz una captura y mándasela a Claude."));
+  }
 }
 // Adjuntos a la vista, en la lista y arriba del correo abierto: un toque y se descargan para abrirlos.
 function tamano(n) { return n > 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round((n || 0) / 1024)) + " KB"; }
