@@ -21,6 +21,21 @@ const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.Re
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
+// Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
+const VERSION = Number("v=59".slice(2));
+function mirarVersion() {
+  const g = document.createElement("script");
+  g.src = "version.js?t=" + Date.now();
+  g.onload = () => {
+    g.remove();
+    if (Number(window.agenteVersion) > VERSION && !document.getElementById("nueva-version")) {
+      const b = el("button", {id: "nueva-version", class: "nueva-version", type: "button", onclick: () => { guardarYa(); location.reload(); }}, "Hay una versión nueva de la app. Toca aquí para actualizar.");
+      document.body.prepend(b);
+    }
+  };
+  g.onerror = () => g.remove();
+  document.head.append(g);
+}
 const estado = {tab: "resp", sel: null, datos: {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []}, lista: [], carpetas: null, cuerpos: {}, confirma: false, resumenes: {}, propuestas: {}, editados: {}, adjuntos: {}, resumenAbierto: {}, reaccionCarta: null, cargado: false, consulta: "", buscando: false, buscado: false, fuera: null, contactos: null, fichaAbierta: null, reaccionando: false, firma: null, redacta: null, yo: null, estilo: null, pideClave: false};
 
 // ---------- utilidades ----------
@@ -551,7 +566,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=58"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=59"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1020,7 +1035,18 @@ function marcas(m) {
   if (puesta) { const r = REACCIONES.find((y) => y[1] === puesta.slice(CAT_PUESTA.length)); lista.push(["hecho", (r ? r[0] + " " : "") + "Reacción puesta"]); }
   if (cats.includes(CAT.baja)) lista.push(["cola", "Baja en trámite"]);
   if (enProceso.has(m.id)) lista.push(["cola", "Enviando…"]);
-  return lista.length ? el("div", {class: "marcas"}, ...lista.map(([tipo, texto]) => el("span", {class: "marca " + tipo}, texto))) : null;
+  const abre = (texto) => texto === "Respondido" || texto === "Reenviado";
+  const verMia = (e) => {
+    e.stopPropagation();
+    if (!estado.miaAbierta) estado.miaAbierta = {};
+    estado.miaAbierta[m.id] = !estado.miaAbierta[m.id];
+    if (estado.respuestas) delete estado.respuestas[m.id];   // se vuelve a pedir, por si acabas de contestar
+    refrescarLista(); pintarDetalle();
+    cargarRespuestas().then(() => { if (!((estado.respuestas || {})[m.id] || []).length) avisar("No encuentro tu respuesta en Enviados todavía"); }).catch(() => {});
+  };
+  return lista.length ? el("div", {class: "marcas"}, ...lista.map(([tipo, texto]) => abre(texto)
+    ? el("button", {class: "marca boton " + tipo, type: "button", title: "Ver lo que contestaste", onclick: verMia}, texto + " ›")
+    : el("span", {class: "marca " + tipo}, texto))) : null;
 }
 function cartaSimple(m) {
   const p = prop(m);
@@ -1830,7 +1856,9 @@ async function arrancar() {
   let ultima = Date.now();
   const alDia = (minimo) => { if (!document.hidden && !estado.sel && !leer("agente.salio") && Date.now() - ultima > minimo) { ultima = Date.now(); cargar(); } };
   setInterval(() => alDia(55000), 60000);
-  document.addEventListener("visibilitychange", () => alDia(8000));
+  document.addEventListener("visibilitychange", () => { alDia(8000); if (!document.hidden) mirarVersion(); });
+  setInterval(mirarVersion, 180000);
+  setTimeout(mirarVersion, 20000);
   window.addEventListener("focus", () => alDia(8000));
 }
 arrancar();
