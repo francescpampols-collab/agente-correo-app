@@ -229,10 +229,31 @@ async function leerCarpetas() {
   for (const f of j.value || []) mapa[f.displayName] = f.id;
   return mapa;
 }
+// ---------- archivar en otra carpeta ----------
+const destinos = {};          // correo → carpeta elegida a mano
+let eligiendo = null;         // correo que tiene abierta la lista de carpetas
+const NO_ARCHIVO = /^(bandeja de entrada|inbox|safata d'entrada|borradores|drafts|esborranys|elementos enviados|sent items|elements enviats|elementos eliminados|deleted items|elements suprimits|correo no deseado|junk email|correu brossa|bandeja de salida|outbox|safata de sortida|historial de conversaciones|conversation history|historial de converses|agente de correo|rss feeds|fuentes rss|problemas de sincronización.*|sync issues.*)$/i;
+function botonCarpeta(m) {
+  return el("button", {class: "plano", type: "button", "aria-expanded": eligiendo === m.id ? "true" : "false", onclick: () => { eligiendo = eligiendo === m.id ? null : m.id; pintar(); pintarDetalle(); }}, "Otra carpeta");
+}
+function selectorCarpeta(m) {
+  if (eligiendo !== m.id) return null;
+  const nombres = Object.keys(estado.carpetas || {}).filter((n) => !NO_ARCHIVO.test(n)).sort((a, b) => a.localeCompare(b, "es"));
+  const actual = carpetaDe(m).nombre;
+  return el("div", {class: "carpetas"},
+    el("span", {class: "eti"}, "Archivar en"),
+    el("div", {class: "opciones"}, ...nombres.map((n) => el("button", {class: "opcion" + (n === actual ? " activa" : ""), type: "button", onclick: () => {
+      destinos[m.id] = n; eligiendo = null;
+      hacer(() => archivar(m), [m.id], "Archivado en " + n);
+    }}, n))));
+}
 function carpetaDe(m) {
   // Mismas carpetas que usa Francesc en Outlook: los avisos de EKON, la web y InfoJobs tienen la suya;
   // el resto va a Interns (empresas del grupo) o Externs según el remitente.
   const quien = dir(m), asunto = m.subject || "";
+  // Si Francesc ha elegido otra carpeta para este correo, manda su elección.
+  const elegida = destinos[m.id];
+  if (elegida && estado.carpetas && estado.carpetas[elegida]) return {nombre: elegida, id: estado.carpetas[elegida]};
   let d = prop(m).destino;
   if (/^ekon@(pampols\.es|optimalpkg\.com)$/i.test(quien)) d = /^\s*Tarea\s+N/i.test(asunto) ? "Tarea" : /^\s*Validaci[oó]n/i.test(asunto) ? "Validacions" : "Ekon";
   else if (/@([a-z0-9-]+\.)*infojobs\.net$/i.test(quien)) d = "infojobs";
@@ -480,7 +501,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=46"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=47"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -780,7 +801,9 @@ function cartaSimple(m) {
       outlook ? el("a", {class: "plano", href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null,
       estado.tab === "arch" ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
       el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
+      botonCarpeta(m),
       botonReaccion(m)),
+    selectorCarpeta(m),
     reaccionesCarta(m));
 }
 // Limpia el texto de un correo para leerlo: fuera caracteres invisibles, líneas de relleno y huecos.
@@ -1417,7 +1440,9 @@ function pintarDetalle() {
       esArchivar ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
       m.archivado
         ? el("button", {class: "lleno", type: "button", onclick: () => reactivar(m)}, "Devolver a la bandeja")
-        : el("button", {class: "lleno archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre)));
+        : el("button", {class: "lleno archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
+      m.archivado ? null : botonCarpeta(m)),
+      m.archivado ? null : selectorCarpeta(m));
   }
 }
 function pintar() {
