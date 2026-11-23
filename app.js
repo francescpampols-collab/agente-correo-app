@@ -22,7 +22,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=59".slice(2));
+const VERSION = Number("v=60".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -566,7 +566,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=59"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=60"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -749,7 +749,7 @@ function alPulsarCarta(mid) {
 }
 function titulo(m) {
   return el("button", {class: "asunto", type: "button", onclick: () => abrir(m.id)},
-    m.isRead === false ? el("span", {class: "punto", role: "img", "aria-label": "No leído"}) : null, m.subject || "(sin asunto)");
+    m.isRead === false ? el("span", {class: "sin-leer"}, "No leído") : null, m.subject || "(sin asunto)");
 }
 // ---------- leído / no leído, igual que en Outlook ----------
 // Se cambia al momento en pantalla y se manda a Outlook por detrás; si falla, vuelve a como estaba.
