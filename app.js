@@ -551,7 +551,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=56"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=57"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1808,6 +1808,11 @@ async function arrancar() {
   if (habia) { if (abierto && todos().some((m) => m.id === abierto)) abrir(abierto); volverAlLugar(); }
   await cargar();
   if (!habia) { if (abierto && todos().some((m) => m.id === abierto)) abrir(abierto); volverAlLugar(); }
-  setInterval(() => { if (!document.hidden && !estado.sel && !leer("agente.salio")) cargar(); }, 120000);
+  // Se pone al día sola cada minuto y, además, en cuanto vuelves a la app desde Outlook u otra pestaña.
+  let ultima = Date.now();
+  const alDia = (minimo) => { if (!document.hidden && !estado.sel && !leer("agente.salio") && Date.now() - ultima > minimo) { ultima = Date.now(); cargar(); } };
+  setInterval(() => alDia(55000), 60000);
+  document.addEventListener("visibilitychange", () => alDia(8000));
+  window.addEventListener("focus", () => alDia(8000));
 }
 arrancar();
