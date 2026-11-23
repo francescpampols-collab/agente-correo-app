@@ -538,16 +538,17 @@ let marcos = [];
 window.addEventListener("message", (e) => {
   const marco = marcos.find((x) => x.contentWindow === e.source);
   if (!marco || !e.data) return;
-  if (e.data.tipo === "listo" && !marco.enviado && marco.html) {
+  // El móvil puede volver a cargar el marco al desplazar la página (lo descarta para ahorrar memoria):
+  // cada vez que avisa de que está listo se le vuelve a dar el correo, o se quedaría en blanco.
+  if (e.data.tipo === "listo" && marco.html) {
     marcos = marcos.filter((x) => x.isConnected);
-    marco.enviado = true;
     marco.contentWindow.postMessage({tipo: "correo", html: marco.html}, "*");
   } else if (e.data.tipo === "alto" && Number.isFinite(e.data.alto)) {
     marco.style.height = Math.min(Math.max(e.data.alto, 40), 30000) + "px";
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=50"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=51"});
   marco.html = html;
   marcos.push(marco);
   return marco;
