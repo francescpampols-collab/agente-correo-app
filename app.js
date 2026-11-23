@@ -525,7 +525,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=48"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=49"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1345,7 +1345,8 @@ function camposDestino(d, pref) {
 }
 // Outlook crea el mensaje (con el hilo y, al reenviar, los adjuntos) y se envía a quien haya quedado elegido.
 async function enviarManual(m, r, archivarDespues) {
-  if (!r.texto.trim()) throw new Error("escribe el mensaje antes de enviar");
+  // Al reenviar se puede mandar sin escribir nada (va solo con la firma); al responder, no.
+  if (!r.texto.trim() && r.modo !== "reenviar") throw new Error("escribe el mensaje antes de enviar");
   if (/\[FALTA/i.test(r.texto)) throw new Error("completa los huecos [FALTA: …]");
   if (!r.para.length) throw new Error("pon al menos un destinatario en «Para»");
   if (!r.para.concat(r.cc, r.cco || []).every((x) => CORREO.test(x))) throw new Error("revisa las direcciones");
