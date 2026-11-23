@@ -191,12 +191,12 @@ async function listarTodo() {
   const etiquetas = [CAT.resp, CAT.news, CAT.arch, CAT.pend, CAT.manual, CAT.baja];
   const q = new URLSearchParams({
     "$filter": etiquetas.map((e) => `categories/any(c:c eq '${e}')`).join(" or "),
-    "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments",
+    "$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,isRead",
     "$expand": `singleValueExtendedProperties($filter=id eq '${PROP}' or id eq 'Integer 0x1081')`,
     "$top": "200",
   });
   // Los ya clasificados y los recién llegados se piden a la vez.
-  const recientes = api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments", "$orderby": "receivedDateTime desc", "$top": "50"})).catch(() => null);
+  const recientes = api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,isRead", "$orderby": "receivedDateTime desc", "$top": "50"})).catch(() => null);
   const j = await api("GET", "/me/mailFolders/inbox/messages?" + q);
   const lista = (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
   // 0x1081 es la marca de Outlook de «respondido / reenviado»; se aparta para que no estorbe a la propiedad del agente.
@@ -443,6 +443,8 @@ function abrir(mid) {
   if (estado.sel !== mid) { if (!(estado.redacta && estado.redacta.mid === mid)) estado.redacta = null; estado.soloTexto = false; estado.reaccionando = false; }
   estado.sel = mid;
   document.body.classList.add("viendo");
+  const abierto = todos().find((x) => x.id === mid);
+  if (abierto && abierto.isRead === false) marcarLeido(abierto, true);
   pintar();
   cargarCorreo(mid);
 }
@@ -548,7 +550,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=53"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=54"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -730,7 +732,21 @@ function alPulsarCarta(mid) {
   return (e) => { if (!e.target.closest("button, a, details")) abrir(mid); };
 }
 function titulo(m) {
-  return el("button", {class: "asunto", type: "button", onclick: () => abrir(m.id)}, m.subject || "(sin asunto)");
+  return el("button", {class: "asunto", type: "button", onclick: () => abrir(m.id)},
+    m.isRead === false ? el("span", {class: "punto", role: "img", "aria-label": "No leído"}) : null, m.subject || "(sin asunto)");
+}
+// ---------- leído / no leído, igual que en Outlook ----------
+// Se cambia al momento en pantalla y se manda a Outlook por detrás; si falla, vuelve a como estaba.
+function marcarLeido(m, leido) {
+  if (m.isRead === leido) return;
+  m.isRead = leido;
+  if (estado.cargado) guardarBandeja();
+  pintar();
+  api("PATCH", `/me/messages/${id(m.id)}`, {isRead: leido}).catch(() => { m.isRead = !leido; pintar(); avisar("No se ha podido cambiar en Outlook"); });
+}
+function botonLeido(m) {
+  if (typeof m.isRead !== "boolean") return null;
+  return el("button", {class: "plano", type: "button", onclick: () => marcarLeido(m, !m.isRead)}, m.isRead ? "Marcar no leído" : "Marcar leído");
 }
 function bloqueResumen(m, p, c) {
   const largo = estado.resumenes[m.id];
@@ -762,7 +778,7 @@ function destinatarios(p) { return Array.isArray(p.para) && p.para.length ? "Se 
 
 function cartaRespuesta(m) {
   const p = prop(m);
-  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
+  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : "") + (m.isRead === false ? " noleido" : ""), onclick: alPulsarCarta(m.id)},
     remitente(m),
     titulo(m),
     marcas(m),
@@ -774,10 +790,20 @@ function cartaRespuesta(m) {
     el("span", {class: "de"}, "Al enviar se archiva en " + carpetaDe(m).nombre),
     p.aviso ? el("span", {class: "aviso"}, "Revisar bien: " + p.aviso) : null,
     faltaDato(m) ? el("span", {class: "aviso"}, "Falta un dato") : null,
-    el("div", {class: "fila"},
-      el("button", {class: "plano", type: "button", onclick: () => abrir(m.id)}, "Ver y editar"),
-      el("button", {class: "lleno", type: "button", disabled: faltaDato(m), onclick: () => hacer(() => enviar(m, null), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar"),
-      botonReaccion(m)),
+    // Sin respuesta preparada no hay nada que enviar desde aquí: se ofrece abrirlo, archivarlo o marcarlo.
+    p.respuesta
+      ? el("div", {class: "fila"},
+          el("button", {class: "plano", type: "button", onclick: () => abrir(m.id)}, "Ver y editar"),
+          el("button", {class: "lleno", type: "button", disabled: faltaDato(m), onclick: () => hacer(() => enviar(m, null), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar"),
+          botonLeido(m),
+          botonReaccion(m))
+      : el("div", {class: "fila"},
+          el("button", {class: "plano", type: "button", onclick: () => abrir(m.id)}, "Abrir y responder"),
+          el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
+          botonCarpeta(m),
+          botonLeido(m),
+          botonReaccion(m)),
+    selectorCarpeta(m),
     reaccionesCarta(m));
 }
 function cartaGrupo(g) {
@@ -850,7 +876,7 @@ function reactivar(m) {
 function fechaCorta(iso) { const f = new Date(iso); return isNaN(f) ? "" : f.toLocaleDateString("es-ES", {day: "numeric", month: "short", year: "numeric"}); }
 function cartaBusqueda(m) {
   const outlook = m.webLink ? enlaceSeguro(m.webLink) : null;
-  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
+  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : "") + (m.isRead === false ? " noleido" : ""), onclick: alPulsarCarta(m.id)},
     remitente(m),
     titulo(m),
     el("span", {class: "de"}, fechaCorta(m.receivedDateTime) + ", guardado en " + m.carpeta),
@@ -941,7 +967,7 @@ function cartaSimple(m) {
   const p = prop(m);
   const baja = p.enlace ? enlaceSeguro(p.enlace) : null;
   const outlook = m.webLink ? enlaceSeguro(m.webLink) : null;
-  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : ""), onclick: alPulsarCarta(m.id)},
+  return el("div", {class: "carta" + (m.id === estado.sel ? " sel" : "") + (m.isRead === false ? " noleido" : ""), onclick: alPulsarCarta(m.id)},
     remitente(m),
     titulo(m),
     marcas(m),
@@ -955,6 +981,7 @@ function cartaSimple(m) {
       estado.tab === "arch" ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
       el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
       botonCarpeta(m),
+      botonLeido(m),
       botonReaccion(m)),
     selectorCarpeta(m),
     reaccionesCarta(m));
