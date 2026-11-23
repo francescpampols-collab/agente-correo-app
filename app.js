@@ -12,8 +12,8 @@ const PROP_FIRMA = "String {00020329-0000-0000-C000-000000000046} Name AgenteCor
 const PROP_ESTILO = "String {00020329-0000-0000-C000-000000000046} Name AgenteCorreoEstilo";
 const PROP_CRITERIOS = "String {00020329-0000-0000-C000-000000000046} Name AgenteCorreoCriterios";
 const IA_RAPIDOS = ["claude-haiku-5-5", "claude-sonnet-5-5"];
-// Para contestar correos manda la rapidez: primero Sonnet, y los demás solo si falla.
-const IA_MODELOS = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-2"];
+// Siempre el modelo más avanzado disponible; los siguientes solo entran si el anterior falla.
+const IA_MODELOS = ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 // Modelo que acaba de fallar: no se vuelve a intentar durante unos minutos, para no esperar dos veces.
 const iaCaidos = new Map();
 const IA_NOMBRES = {"claude-fable-5-2": "Fable 5.2", "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5"};
@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=63".slice(2));
+const VERSION = Number("v=64".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -569,7 +569,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=63"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=64"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1220,6 +1220,8 @@ async function ia(sistema, usuario, maximo, modelos) {
   const clave = leer("agente.ia");
   if (!clave) throw new Error("activa antes la IA en este dispositivo");
   let fallo = "sin respuesta";
+  const tropiezos = [];
+  const anotar = (modelo, motivo) => { fallo = motivo; tropiezos.push((IA_NOMBRES[modelo] || modelo) + ": " + motivo); };
   const orden = modelos || IA_MODELOS;
   const vivos = orden.filter((x) => !(iaCaidos.get(x) > Date.now()));
   for (const modelo of vivos.length ? vivos : orden) {
@@ -1227,13 +1229,15 @@ async function ia(sistema, usuario, maximo, modelos) {
     try {
       r = await fetch("https://api.anthropic.com/v1/messages", {method: "POST", headers: {"content-type": "application/json", "x-api-key": clave, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true"},
         body: JSON.stringify({model: modelo, max_tokens: maximo, system: sistema, messages: [{role: "user", content: usuario}]})});
-    } catch (e) { fallo = "sin conexión con Anthropic"; continue; }
+    } catch (e) { anotar(modelo, "sin conexión"); continue; }
     if (r.status === 401 || r.status === 403) throw new Error("la clave de la IA no es válida");
-    if (!r.ok) { fallo = "Anthropic ha respondido " + r.status; iaCaidos.set(modelo, Date.now() + 10 * 60000); continue; }
+    if (!r.ok) { anotar(modelo, "error " + r.status); iaCaidos.set(modelo, Date.now() + (r.status === 429 || r.status >= 500 ? 2 : 10) * 60000); continue; }
     const j = await r.json().catch(() => null);
-    if (!j || j.stop_reason === "max_tokens") { fallo = "respuesta incompleta"; continue; }
+    if (!j || j.stop_reason === "max_tokens") { anotar(modelo, "respuesta cortada"); continue; }
     const texto = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
-    if (texto) return {texto, modelo: IA_NOMBRES[modelo] || modelo};
+    // Si un modelo anterior falló, se dice cuál y por qué junto al nombre del que ha contestado.
+    if (texto) return {texto, modelo: (IA_NOMBRES[modelo] || modelo) + (tropiezos.length ? "; antes falló " + tropiezos.join(", ") : "")};
+    anotar(modelo, "respuesta vacía");
   }
   throw new Error(fallo);
 }
