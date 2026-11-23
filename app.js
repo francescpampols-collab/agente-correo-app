@@ -260,7 +260,7 @@ const destinos = {};          // correo → carpeta elegida a mano
 let eligiendo = null;         // correo que tiene abierta la lista de carpetas
 const NO_ARCHIVO = /^(bandeja de entrada|inbox|safata d'entrada|borradores|drafts|esborranys|elementos enviados|sent items|elements enviats|elementos eliminados|deleted items|elements suprimits|correo no deseado|junk email|correu brossa|bandeja de salida|outbox|safata de sortida|historial de conversaciones|conversation history|historial de converses|agente de correo|rss feeds|fuentes rss|problemas de sincronización.*|sync issues.*)$/i;
 function botonCarpeta(m) {
-  return el("button", {class: "plano", type: "button", "aria-expanded": eligiendo === m.id ? "true" : "false", onclick: () => { eligiendo = eligiendo === m.id ? null : m.id; pintar(); pintarDetalle(); }}, "Otra carpeta");
+  return el("button", {class: "plano", type: "button", "aria-expanded": eligiendo === m.id ? "true" : "false", onclick: () => { eligiendo = eligiendo === m.id ? null : m.id; estado.carpetaArriba = false; pintar(); pintarDetalle(); }}, "Otra carpeta");
 }
 function selectorCarpeta(m) {
   if (eligiendo !== m.id) return null;
@@ -550,7 +550,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=54"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=55"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1047,6 +1047,8 @@ const TRAZOS = {
   reenviar: "M14 7l6 6-6 6M20 13h-9a7 7 0 0 0-7 7",
   clip: "M20 11.5l-7.6 7.6a5 5 0 0 1-7.1-7.1l8-8a3.4 3.4 0 0 1 4.8 4.8l-7.9 7.9a1.8 1.8 0 0 1-2.5-2.5l7.2-7.2",
   reaccion: "M12 3.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19M8 15.5c1.1 1.5 2.4 2.2 4 2.2s2.9-.7 4-2.2M9 10.3v.9M15 10.3v.9",
+  archivo: "M3.5 5.5h17v5h-17zM5.5 10.5v10h13v-10M10 14.5h4",
+  carpeta: "M3 7.5a2 2 0 0 1 2-2h4.5l2 2.5H19a2 2 0 0 1 2 2V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
 };
 function icono(nombre) {
   const NS = "http://www.w3.org/2000/svg";
@@ -1532,7 +1534,10 @@ function barraOutlook(m) {
       if (campo && estado.redacta) campo.focus();
     }}, icono(modo), MODOS[modo][1])),
     // Las reacciones (pulgar, corazón…) solo las puede poner Outlook: este botón abre ahí el mismo correo.
-    el("button", {class: "accion" + (estado.reaccionando ? " activa" : ""), type: "button", "aria-pressed": estado.reaccionando ? "true" : "false", onclick: () => { estado.reaccionando = !estado.reaccionando; pintarDetalle(); }}, icono("reaccion"), "Reaccionar"));
+    el("button", {class: "accion" + (estado.reaccionando ? " activa" : ""), type: "button", "aria-pressed": estado.reaccionando ? "true" : "false", onclick: () => { estado.reaccionando = !estado.reaccionando; pintarDetalle(); }}, icono("reaccion"), "Reaccionar"),
+    // Archivar también desde arriba, sin bajar hasta el final del correo.
+    m.archivado ? null : el("button", {class: "accion verde", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, icono("archivo"), "Archivar"),
+    m.archivado ? null : el("button", {class: "accion" + (eligiendo === m.id ? " activa" : ""), type: "button", "aria-expanded": eligiendo === m.id ? "true" : "false", onclick: () => { eligiendo = eligiendo === m.id ? null : m.id; estado.carpetaArriba = true; pintar(); pintarDetalle(); }}, icono("carpeta"), "Otra carpeta"));
 }
 function panelManual(m) {
   const r = estado.redacta && estado.redacta.mid === m.id ? estado.redacta : null;
@@ -1585,6 +1590,7 @@ function pintarDetalle() {
       marcas(m),
       filaAdjuntos(m),
       barraOutlook(m),
+      estado.carpetaArriba ? selectorCarpeta(m) : null,
       barraReacciones(m)),
     panelManual(m),
     bloquePropuesta(m, esRespuesta),
@@ -1623,7 +1629,7 @@ function pintarDetalle() {
         ? el("button", {class: "lleno", type: "button", onclick: () => reactivar(m)}, "Devolver a la bandeja")
         : el("button", {class: "lleno archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
       m.archivado ? null : botonCarpeta(m)),
-      m.archivado ? null : selectorCarpeta(m));
+      m.archivado || estado.carpetaArriba ? null : selectorCarpeta(m));
   }
 }
 function pintar() {

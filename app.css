@@ -257,3 +257,8 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .carta.noleido .asunto{font-weight:700}
 .carta:not(.noleido) .asunto{font-weight:500}
 .punto{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--azul);margin-right:8px;vertical-align:middle}
+
+/* Barra del correo: seis acciones; en pantallas estrechas pasan a dos filas */
+.barra{flex-wrap:wrap}
+.barra .accion{flex:1 1 104px}
+.accion.verde{color:var(--verde)}
