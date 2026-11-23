@@ -22,7 +22,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=60".slice(2));
+const VERSION = Number("v=61".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -566,7 +566,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=60"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=61"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1373,10 +1373,15 @@ async function pedirPropuesta(m, guia) {
   const x = estado.propuestas[m.id] = Object.assign(estado.propuestas[m.id] || {}, {fase: "cargando", error: null});
   repintarSi(m.id);
   try {
-    const sistema = `Preparas la respuesta a un correo en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él la revise y la envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\nPropón siempre una respuesta, aunque sea un acuse breve. No inventes datos, importes, fechas ni compromisos: si falta algo que solo Francesc sabe, escribe [FALTA: qué dato] en su sitio.\nFormato de salida: la primera línea es exactamente «PARA: remitente» o «PARA: todos» (todos solo si los demás destinatarios necesitan leer la respuesta). A continuación, solo el texto del correo, sin asunto ni explicaciones.`;
+    const sistema = `Preparas la respuesta a un correo en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él la revise y la envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\nNo inventes datos, importes, fechas ni compromisos, y no decidas por él. ${guia ? "Si aun con sus respuestas falta un dato concreto, escribe [FALTA: qué dato] en su sitio." : "Antes de redactar, comprueba si para contestar hace falta una decisión o un dato que solo Francesc puede dar (elegir entre opciones, aceptar o no, un precio, una fecha, quién se encarga). Si falta algo así, NO redactes nada: responde únicamente con la palabra PREGUNTAR. Solo si tienes todo lo necesario, redacta la respuesta (un acuse breve vale cuando no hay nada que decidir)."}\nFormato de salida: la primera línea es exactamente «PARA: remitente» o «PARA: todos» (todos solo si los demás destinatarios necesitan leer la respuesta). A continuación, solo el texto del correo, sin asunto ni explicaciones.`;
     const usuario = (guia ? `Francesc ha contestado este test para definir la respuesta; respétalo punto por punto:\n${guia}\n\n` : "") + correoParaIA(m);
     const res = await iaConAdjuntos(m, sistema, usuario, 3000);
     const nueva = partirPropuesta(res.texto);
+    // Si a la IA le falta una decisión de Francesc, no se enseña un correo con huecos: se le pregunta.
+    if (!guia && (/^\s*(PARA:[^\n]*\n)?\s*PREGUNTAR\b/i.test(res.texto) || /\[FALTA/i.test(nueva.texto || ""))) {
+      x.texto = "";
+      return pedirTest(m, "", x.destino || null);
+    }
     if (x.destino) delete nueva.todos;
     Object.assign(x, nueva, {fase: "lista", modelo: res.modelo});
   } catch (e) { x.fase = "error"; x.error = e.message; }
@@ -1388,7 +1393,7 @@ async function pedirTest(m, anterior, destino) {
   if (destino) x.destino = {modo: destino.modo, para: destino.para.slice(), cc: destino.cc.slice(), cco: (destino.cco || []).slice()};
   repintarSi(m.id);
   try {
-    const sistema = `Francesc Pampols, administrador de Grup PAMPOLS, tiene que contestar un correo y la respuesta propuesta no le convence. Prepara un test con las preguntas que hagan falta para definir la respuesta, ni una más: una por cada decisión real que plantea este correo (aceptar o no, plazos, quién se encarga, qué pedir a cambio, a quién contestar). Si el correo es sencillo bastan 1 o 2. Si es complejo (varios asuntos, un hilo largo, adjuntos, cifras o decisiones encadenadas) pregunta más: una por cada asunto abierto y, dentro de un asunto, por cada decisión que cambie la respuesta (importe, fecha, responsable, condición), hasta un máximo de 14. Antes de escribir el test repasa el correo punto por punto para no dejarte ninguno. No preguntes por el tono ni nada genérico, ni lo que ya se deduce del correo. Cada pregunta con entre 2 y 4 opciones cortas (máximo 9 palabras), distintas entre sí y realistas para este caso; no añadas una opción «Otra», la app ya la pone. En castellano. ${AVISO_IA}\nDevuelve solo JSON válido con esta forma: {"preguntas":[{"pregunta":"…","opciones":["…","…"]}]}`;
+    const sistema = `Francesc Pampols, administrador de Grup PAMPOLS, tiene que contestar un correo y antes hay que saber qué quiere decir. Prepara un test con las preguntas que hagan falta para definir la respuesta, ni una más: una por cada decisión real que plantea este correo (aceptar o no, plazos, quién se encarga, qué pedir a cambio, a quién contestar). Si el correo es sencillo bastan 1 o 2. Si es complejo (varios asuntos, un hilo largo, adjuntos, cifras o decisiones encadenadas) pregunta más: una por cada asunto abierto y, dentro de un asunto, por cada decisión que cambie la respuesta (importe, fecha, responsable, condición), hasta un máximo de 14. Antes de escribir el test repasa el correo punto por punto para no dejarte ninguno. No preguntes por el tono ni nada genérico, ni lo que ya se deduce del correo. Cada pregunta con entre 2 y 4 opciones cortas (máximo 9 palabras), distintas entre sí y realistas para este caso; no añadas una opción «Otra», la app ya la pone. En castellano. ${AVISO_IA}\nDevuelve solo JSON válido con esta forma: {"preguntas":[{"pregunta":"…","opciones":["…","…"]}]}`;
     const res = await ia(sistema, (x.texto ? `Respuesta propuesta que no le convence:\n${x.texto}\n\n` : "") + correoParaIA(m), 4000);
     const j = JSON.parse(res.texto.slice(res.texto.indexOf("{"), res.texto.lastIndexOf("}") + 1));
     const preguntas = (j.preguntas || []).filter((q) => q && typeof q.pregunta === "string" && Array.isArray(q.opciones)).slice(0, 14)
