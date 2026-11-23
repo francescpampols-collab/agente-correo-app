@@ -195,6 +195,8 @@ async function listarTodo() {
     "$expand": `singleValueExtendedProperties($filter=id eq '${PROP}' or id eq 'Integer 0x1081')`,
     "$top": "200",
   });
+  // Los ya clasificados y los recién llegados se piden a la vez.
+  const recientes = api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments", "$orderby": "receivedDateTime desc", "$top": "50"})).catch(() => null);
   const j = await api("GET", "/me/mailFolders/inbox/messages?" + q);
   const lista = (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
   // 0x1081 es la marca de Outlook de «respondido / reenviado»; se aparta para que no estorbe a la propiedad del agente.
@@ -208,8 +210,8 @@ async function listarTodo() {
   // Lo recién llegado que el agente aún no ha clasificado: se enseña ya, sin esperar a su siguiente pasada.
   let nuevo = [];
   try {
-    const r = await api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$select": "id,subject,from,bodyPreview,receivedDateTime,categories,webLink,hasAttachments", "$orderby": "receivedDateTime desc", "$top": "50"}));
-    nuevo = (r.value || []).filter((m) => !(m.categories || []).some((c) => c.startsWith("Agente:")));
+    const r = await recientes;
+    nuevo = ((r && r.value) || []).filter((m) => !(m.categories || []).some((c) => c.startsWith("Agente:")));
     nuevo.forEach((m) => { m.sinClasificar = true; });
   } catch (e) {}
   const de = (e) => lista.filter((m) => (m.categories || []).includes(e));
@@ -286,12 +288,31 @@ function carpetaDe(m) {
   if (!(estado.carpetas && estado.carpetas[d])) d = /@(pampols\.es|optimalpkg\.com|pampols\.fr)$/i.test(quien) ? "Interns" : "Externs";
   return estado.carpetas && estado.carpetas[d] ? {nombre: d, id: estado.carpetas[d]} : {nombre: "Archivo", id: "archive"};
 }
+// Copia de la última bandeja leída, guardada en el dispositivo: al abrir la app se pinta al instante
+// y se pone al día por detrás. «Salir» la borra.
+let carpetasAlDia = false;
+function guardarBandeja() {
+  const d = estado.datos;
+  guardar("agente.bandeja", {t: Date.now(), carpetas: estado.carpetas, lista: estado.lista, datos: {nuevo: d.nuevo, resp: d.resp, news: d.news, arch: d.arch, pend: d.pend}});
+}
+function recuperarBandeja() {
+  const b = leer("agente.bandeja");
+  if (!b || typeof b !== "object" || !b.datos || Date.now() - Number(b.t) > 3 * 864e5) return false;
+  const lista = (x) => Array.isArray(x) ? x.filter((m) => m && typeof m.id === "string") : [];
+  estado.datos = {nuevo: lista(b.datos.nuevo), resp: lista(b.datos.resp), news: lista(b.datos.news), arch: lista(b.datos.arch), pend: lista(b.datos.pend), busca: []};
+  if (b.carpetas && typeof b.carpetas === "object") estado.carpetas = b.carpetas;
+  if (Array.isArray(b.lista)) estado.lista = b.lista.filter((x) => typeof x === "string");
+  estado.cargado = true;
+  return true;
+}
 async function cargar() {
   $("recargar").disabled = true;
   try {
-    if (!estado.carpetas) estado.carpetas = await leerCarpetas();
-    estado.datos = Object.assign(await listarTodo(), {busca: (estado.datos.busca || []).filter((m) => m.archivado)});
-    estado.lista = await leerLista();
+    const [carpetas, datos, lista] = await Promise.all([carpetasAlDia ? estado.carpetas : leerCarpetas(), listarTodo(), leerLista()]);
+    estado.carpetas = carpetas; carpetasAlDia = true;
+    estado.datos = Object.assign(datos, {busca: (estado.datos.busca || []).filter((m) => m.archivado)});
+    estado.lista = lista;
+    guardarBandeja();
     if (estado.sel && !todos().some((m) => m.id === estado.sel)) cerrar();
     estado.cargado = true;
     if (enProceso.size) quitar(Array.from(enProceso));
@@ -306,6 +327,7 @@ function todos() { return [].concat(estado.datos.busca || [], estado.datos.nuevo
 function quitar(ids) {
   for (const k of Object.keys(estado.datos)) estado.datos[k] = estado.datos[k].filter((m) => !ids.includes(m.id));
   if (ids.includes(estado.sel)) cerrar();
+  if (estado.cargado) guardarBandeja();   // lo archivado no reaparece si la página se recarga
 }
 function grupos() {
   const g = new Map();
@@ -525,7 +547,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=49"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=50"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1548,6 +1570,7 @@ function salir() {
   clearTimeout(relojTrabajo);
   borrar("agente.trabajo");
   borrar("agente.contactos");
+  borrar("agente.bandeja");
   Object.assign(estado, {propuestas: {}, resumenes: {}, editados: {}, redacta: null});
   guardar("agente.salio", true);
   estado.datos = {nuevo: [], resp: [], news: [], arch: [], pend: [], busca: []};
@@ -1572,10 +1595,12 @@ async function arrancar() {
   $("recargar").onclick = cargar;
   $("salir").onclick = salir;
   const abierto = recuperarTrabajo();
+  const habia = recuperarBandeja();
   pintar();
+  // Con la copia guardada se vuelve al sitio sin esperar a Outlook; la lectura real llega después.
+  if (habia) { if (abierto && todos().some((m) => m.id === abierto)) abrir(abierto); volverAlLugar(); }
   await cargar();
-  if (abierto && todos().some((m) => m.id === abierto)) abrir(abierto);
-  volverAlLugar();
+  if (!habia) { if (abierto && todos().some((m) => m.id === abierto)) abrir(abierto); volverAlLugar(); }
   setInterval(() => { if (!document.hidden && !estado.sel && !leer("agente.salio")) cargar(); }, 120000);
 }
 arrancar();
