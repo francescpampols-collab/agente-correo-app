@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=71".slice(2));
+const VERSION = Number("v=72".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=71"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=72"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1575,7 +1575,7 @@ function bloquePropuesta(m, esRespuesta) {
   const falta = /\[FALTA/i.test(x.texto);
   return el("div", {class: "carta propuesta"},
     el("span", {class: "eti"}, "Propuesta de respuesta (" + x.modelo + ")"),
-    camposDestino(x.destino, "p"),
+    camposDestino(x.destino, "p", m),
     el("button", {class: "enlace izquierda", type: "button", onclick: cambiar}, x.destino.modo === "todos" ? "Responder solo al remitente" : "Responder a todos (incluye a los que estaban en copia)"),
     el("p", {class: "cuerpo"}, x.texto),
     falta ? el("span", {class: "aviso"}, "Tiene huecos [FALTA: …]: edítala para completarlos") : null,
@@ -1686,7 +1686,12 @@ function buscarContactos(texto) {
 // Para, CC y CCO como en Outlook: fichas que se quitan, se añaden con sugerencias al escribir
 // y se mueven de un campo a otro (arrastrando en el PC; tocando la ficha en el móvil).
 const CAMPOS = [["para", "Para"], ["cc", "CC"], ["cco", "CCO"]];
-function camposDestino(d, pref) {
+// El asunto con el que saldrá: el del correo, con «RE:» o «RV:» delante si aún no lo lleva.
+function asuntoSalida(m, modo) {
+  const a = String((m && m.subject) || "").trim() || "(sin asunto)";
+  return modo === "reenviar" ? (/^(rv|fw|fwd)\s*:/i.test(a) ? a : "RV: " + a) : (/^re\s*:/i.test(a) ? a : "RE: " + a);
+}
+function camposDestino(d, pref, m) {
   for (const [k] of CAMPOS) if (!Array.isArray(d[k])) d[k] = [];
   const repintar = (foco) => { pintarDetalle(); if (foco) { const c = $(pref + foco); if (c) c.focus(); } };
   const puestos = () => new Set(d.para.concat(d.cc, d.cco).map((x) => x.toLowerCase()));
@@ -1756,7 +1761,8 @@ function camposDestino(d, pref) {
     });
     return el("div", {class: "campo"}, el("span", {class: "campo-eti"}, etiqueta), el("div", {class: "campo-caja"}, zona, lista));
   };
-  return el("div", {class: "destinos"}, ...CAMPOS.map(fila));
+  return el("div", {class: "destinos"}, ...CAMPOS.map(fila),
+    m ? el("div", {class: "campo"}, el("span", {class: "campo-eti"}, "Asunto"), el("div", {class: "campo-caja asunto-salida"}, asuntoSalida(m, d.modo))) : null);
 }
 // Outlook crea el mensaje (con el hilo y, al reenviar, los adjuntos) y se envía a quien haya quedado elegido.
 async function enviarManual(m, r, archivarDespues) {
@@ -1810,7 +1816,7 @@ function panelManual(m) {
   idea.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); redactar(); } });
   return el("div", {class: "carta redaccion"},
     el("span", {class: "eti"}, MODOS[r.modo][1]),
-    camposDestino(r, ""),
+    camposDestino(r, "", m),
     hayIA ? el("div", {class: "ia"},
       el("label", {}, "Dile a la IA qué quieres contestar", idea),
       el("button", {class: "lleno corto", type: "button", onclick: redactar}, r.texto.trim() ? "Mejorar con IA" : "Redactar con IA"),

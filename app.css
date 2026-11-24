@@ -191,6 +191,7 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .destinos{display:flex;flex-direction:column;gap:8px}
 .campo-caja{flex:1;min-width:0;position:relative}
 .campo-caja .fichas{flex:none}
+.asunto-salida{padding:9px 10px;border:1px dashed var(--linea);border-radius:8px;font-weight:500;color:var(--tinta);overflow-wrap:anywhere}
 .fichas.soltar{border-color:var(--azul);background:#EEF3F8}
 .ficha{cursor:grab;padding:0}
 .ficha .ficha-txt{border:0;background:none;color:inherit;font:inherit;font-size:14px;line-height:1.2;padding:0 2px 0 10px;min-height:34px;min-width:0;text-align:left;overflow-wrap:anywhere;cursor:pointer}
