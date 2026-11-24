@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=66".slice(2));
+const VERSION = Number("v=67".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -407,6 +407,41 @@ async function pasarATuyos(m) {
   const cats = (m.categories || []).filter((c) => !c.startsWith("Agente:")).concat(CAT.pend);
   await api("PATCH", `/me/messages/${id(m.id)}`, {categories: cats});
 }
+// «Solo en Outlook»: el correo sigue en la Bandeja de entrada, pero ni la app ni el agente lo vuelven a tratar.
+const CAT_FUERA = "Agente: solo Outlook";
+async function soloOutlook(m) {
+  const cats = (m.categories || []).filter((c) => !c.startsWith("Agente:")).concat(CAT_FUERA);
+  await api("PATCH", `/me/messages/${id(m.id)}`, {categories: cats});
+}
+function botonFuera(m) {
+  if (m.archivado) return null;
+  return el("button", {class: "plano", type: "button", title: "Se queda en la Bandeja de entrada de Outlook y deja de salir aquí", onclick: (e) => { e.stopPropagation(); hacer(() => soloOutlook(m), [m.id], "Se queda en Outlook; aquí ya no sale. Lo recuperas desde Buscar"); }}, "Solo en Outlook");
+}
+async function verFuera() {
+  try {
+    const j = await api("GET", "/me/mailFolders/inbox/messages?" + new URLSearchParams({"$filter": `categories/any(c:c eq '${CAT_FUERA}')`, "$select": "id,subject,from,receivedDateTime,categories", "$top": "100"}));
+    estado.fuera = (j.value || []).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
+  } catch (e) { avisar("No se ha podido leer la lista: " + e.message); }
+  pintar();
+}
+async function volverAGestionar(m) {
+  estado.fuera = (estado.fuera || []).filter((x) => x.id !== m.id);
+  pintar();
+  try {
+    await api("PATCH", `/me/messages/${id(m.id)}`, {categories: (m.categories || []).filter((c) => !c.startsWith("Agente:")).concat(CAT.pend)});
+    avisar("Vuelve a la app: está en Tuyos");
+    await cargar();
+  } catch (e) { avisar("No se ha podido recuperar: " + e.message); verFuera(); }
+}
+function panelFuera() {
+  if (!estado.fuera) return [];
+  if (!estado.fuera.length) return [el("p", {class: "pide"}, "No has dejado ningún correo solo en Outlook.")];
+  return [el("div", {class: "carta"},
+    el("span", {class: "eti"}, "Solo en Outlook: siguen en tu Bandeja de entrada, fuera de la app"),
+    ...estado.fuera.map((m) => el("div", {class: "fila centro"},
+      el("span", {class: "pide normal"}, de(m) + " · " + (m.subject || "(sin asunto)")),
+      el("button", {class: "plano corto", type: "button", onclick: () => volverAGestionar(m)}, "Volver a gestionar"))))];
+}
 async function pedirBaja(grupo) {
   const m = grupo.items[0];
   const cats = (m.categories || []).filter((c) => !c.startsWith("Agente:")).concat(CAT.baja);
@@ -570,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=66"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=67"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -817,12 +852,14 @@ function cartaRespuesta(m) {
           el("button", {class: "plano", type: "button", onclick: () => abrir(m.id)}, "Ver y editar"),
           el("button", {class: "lleno", type: "button", disabled: faltaDato(m), onclick: () => hacer(() => enviar(m, null), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar"),
           botonLeido(m),
+          botonFuera(m),
           botonReaccion(m))
       : el("div", {class: "fila"},
           el("button", {class: "plano", type: "button", onclick: () => abrir(m.id)}, "Abrir y responder"),
           el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
           botonCarpeta(m),
           botonLeido(m),
+          botonFuera(m),
           botonReaccion(m)),
     selectorCarpeta(m),
     reaccionesCarta(m));
@@ -919,6 +956,7 @@ function panelBusqueda() {
   return el("div", {class: "carta buscador"},
     el("label", {}, "Buscar en los correos archivados", campo),
     el("button", {class: "lleno", type: "button", disabled: estado.buscando ? "" : null, onclick: buscar}, estado.buscando ? "Buscando…" : "Buscar"),
+    el("button", {class: "enlace izquierda", type: "button", onclick: () => { if (estado.fuera) { estado.fuera = null; pintar(); } else verFuera(); }}, estado.fuera ? "Ocultar los que dejaste solo en Outlook" : "Ver los correos que dejaste solo en Outlook"),
     leer("agente.ia") ? el("button", {class: "enlace izquierda", type: "button", onclick: probarModelos}, "Probar los modelos de IA") : null);
 }
 // Diagnóstico: una pregunta mínima a cada modelo con tu clave, para ver cuál responde, cuánto tarda
@@ -1097,6 +1135,7 @@ function cartaSimple(m) {
       el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
       botonCarpeta(m),
       botonLeido(m),
+      botonFuera(m),
       botonReaccion(m)),
     selectorCarpeta(m),
     reaccionesCarta(m));
@@ -1791,7 +1830,8 @@ function construirDetalle(d) {
       m.archivado
         ? el("button", {class: "lleno", type: "button", onclick: () => reactivar(m)}, "Devolver a la bandeja")
         : el("button", {class: "lleno archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
-      m.archivado ? null : botonCarpeta(m)),
+      m.archivado ? null : botonCarpeta(m),
+      botonFuera(m)),
       m.archivado || estado.carpetaArriba ? null : selectorCarpeta(m));
   }
 }
@@ -1814,7 +1854,7 @@ function pintar() {
         el("span", {class: "pide normal"}, d),
         el("button", {class: "plano corto", type: "button", onclick: () => hacer(() => guardarLista(estado.lista.filter((x) => x !== d)), [], "Quitado de la lista")}, "Quitar")))));
   }
-  else if (estado.tab === "busca") cartas = [panelBusqueda()].concat(d.busca.map(cartaBusqueda), !d.busca.length && estado.buscado && !estado.buscando ? [el("p", {class: "pide"}, "No hay correos archivados con ese asunto o remitente.")] : []);
+  else if (estado.tab === "busca") cartas = [panelBusqueda()].concat(panelFuera(), d.busca.map(cartaBusqueda), !d.busca.length && estado.buscado && !estado.buscando ? [el("p", {class: "pide"}, "No hay correos archivados con ese asunto o remitente.")] : []);
   else cartas = d[estado.tab].map(cartaSimple);
   if (estado.tab === "nuevo" && cartas.length) cartas.unshift(el("p", {class: "pide"}, leer("agente.ia") ? "Recién llegados. Se clasifican solos en unos segundos; puedes abrirlos ya." : "Recién llegados. El agente todavía no los ha clasificado; puedes abrirlos, contestarlos o archivarlos ya."));
   $("lista").replaceChildren(...(cartas.length ? cartas : [el("div", {class: "vacio"}, el("b", {}, "Nada pendiente aquí"), estado.tab === "nuevo" ? "No hay correos nuevos sin clasificar." : "La bandeja de entrada solo guarda lo que queda por resolver.")]));
