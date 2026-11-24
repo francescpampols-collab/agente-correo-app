@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=75".slice(2));
+const VERSION = Number("v=76".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=75"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=76"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1070,7 +1070,7 @@ function respondido(m) {
 async function cargarRespuestas() {
   if (!estado.respuestas) estado.respuestas = {};
   const faltan = todos().filter((m) => m.conversationId && respondido(m) && !estado.respuestas[m.id]);
-  const ruta = (m, campo) => "/me/mailFolders/sentitems/messages?$filter=" + encodeURIComponent(`conversationId eq '${String(m.conversationId).replace(/'/g, "''")}'`) + `&$select=id,subject,sentDateTime,toRecipients,${campo}&$top=15`;
+  const ruta = (m, campo) => "/me/mailFolders/sentitems/messages?$filter=" + encodeURIComponent(`conversationId eq '${String(m.conversationId).replace(/'/g, "''")}'`) + `&$select=id,subject,sentDateTime,toRecipients,ccRecipients,${campo}&$top=15`;
   for (let i = 0; i < faltan.length; i += 4) {
     const grupo = faltan.slice(i, i + 4);
     for (const campo of ["uniqueBody", "bodyPreview"]) {
@@ -1085,6 +1085,7 @@ async function cargarRespuestas() {
             .filter((e) => (e.sentDateTime || "") >= (m.receivedDateTime || ""))
             .sort((a, b) => (a.sentDateTime || "").localeCompare(b.sentDateTime || ""))
             .map((e) => ({fecha: e.sentDateTime, asunto: e.subject || "", para: (e.toRecipients || []).map((t) => (t.emailAddress || {}).name || (t.emailAddress || {}).address || "").filter(Boolean),
+              dirs: (e.toRecipients || []).concat(e.ccRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()).filter((a) => CORREO.test(a)),
               texto: limpiarMio(((e.uniqueBody || {}).content) || e.bodyPreview || "")}));
         }
       } catch (e) {}
@@ -1577,6 +1578,9 @@ async function pedirPropuesta(m, guia) {
   const x = estado.propuestas[m.id] = Object.assign(estado.propuestas[m.id] || {}, {fase: "cargando", error: null});
   repintarSi(m.id);
   try {
+    // Lo que ya contestaste en este hilo (y a quién pusiste en copia) tiene que estar leído antes de proponer.
+    if (respondido(m) && estado.respuestas) delete estado.respuestas[m.id];
+    await cargarRespuestas().catch(() => {});
     const sistema = `Preparas la respuesta a un correo en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él la revise y la envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\n${AVISO_DESTINO}\nNo inventes datos, importes, fechas ni compromisos, y no decidas por él. ${guia ? "Si aun con sus respuestas falta un dato concreto, escribe [FALTA: qué dato] en su sitio." : "Antes de redactar, comprueba si para contestar hace falta una decisión o un dato que solo Francesc puede dar (elegir entre opciones, aceptar o no, un precio, una fecha, quién se encarga). Si falta algo así, NO redactes nada: responde únicamente con un JSON de preguntas tipo test para que Francesc decida, " + FORMATO_TEST + " Solo si tienes todo lo necesario, redacta la respuesta (un acuse breve vale cuando no hay nada que decidir)."}\n${AVISO_DERIVADOS}\nFormato de salida: la primera línea es exactamente «PARA: remitente» o «PARA: todos» (todos solo si los demás destinatarios necesitan leer la respuesta). A continuación, solo el texto del correo, sin asunto ni explicaciones; y detrás, si los hay, los derivados.`;
     // Si el agente ya leyó el correo y sus adjuntos, se le pasa su resumen en vez de volver a mandar los PDF:
     // es bastante más rápido y gasta menos.
@@ -1660,8 +1664,11 @@ function bloquePropuesta(m, esRespuesta) {
   }
   // Destinatarios a la vista y editables: se parte de lo que haría Outlook y se quita o añade a quien haga falta.
   if (!x.destino || !MODOS[x.destino.modo] || !Array.isArray(x.destino.para) || !Array.isArray(x.destino.cc)) {
-    const modo = x.todos ? "todos" : "responder";
-    x.destino = Object.assign({modo}, destinatariosIniciales(m, modo));
+    // Por defecto se mantiene en copia a quien ya estaba en el hilo (hasta 8 personas); con más, solo si la IA lo ve necesario.
+    const todos0 = destinatariosIniciales(m, "todos"), solo0 = destinatariosIniciales(m, "responder");
+    const otros = todos0.para.length + todos0.cc.length - solo0.para.length;
+    const modo = x.todos || (otros > 0 && otros <= 8) ? "todos" : "responder";
+    x.destino = Object.assign({modo}, modo === "todos" ? todos0 : solo0);
   }
   const r = () => ({mid: m.id, modo: x.destino.modo, texto: x.texto, idea: "", para: x.destino.para.slice(), cc: x.destino.cc.slice(), cco: (x.destino.cco || []).slice()});
   const cambiar = () => { const modo = x.destino.modo === "todos" ? "responder" : "todos"; x.destino = Object.assign({modo}, destinatariosIniciales(m, modo)); pintarDetalle(); };
@@ -1676,7 +1683,7 @@ function bloquePropuesta(m, esRespuesta) {
     falta ? el("span", {class: "aviso"}, "Tiene huecos [FALTA: …]: edítala para completarlos") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => pedirTest(m, null, x.destino)}, "No me convence"),
-      el("button", {class: "plano", type: "button", title: "Pedir a la IA otra propuesta desde cero", onclick: () => pedirPropuesta(m)}, "Rehacer"),
+      el("button", {class: "plano", type: "button", title: "Pedir a la IA otra propuesta desde cero", onclick: () => { delete x.destino; pedirPropuesta(m); }}, "Rehacer"),
       el("button", {class: "plano", type: "button", onclick: () => { estado.redacta = r(); pintarDetalle(); const a = $("manual"); if (a) a.focus(); }}, "Editar"),
       quedan
         ? el("button", {class: "lleno", type: "button", disabled: falta ? "" : null, onclick: () => hacer(() => enviarManual(m, r(), false), [], "Respuesta enviada. Quedan los correos derivados")}, "Enviar la respuesta")
@@ -1715,7 +1722,9 @@ function destinatariosIniciales(m, modo) {
   if (modo === "responder") return {para: unicos(origen), cc: []};
   const noYo = (x) => x.toLowerCase() !== estado.yo;
   const para = unicos(origen.concat((c.a || []).filter(noYo)));
-  return {para, cc: unicos((c.cc || []).filter(noYo)).filter((x) => !para.some((p) => p.toLowerCase() === x.toLowerCase()))};
+  // También vuelven a copia los que tú pusiste en tu última respuesta del hilo, aunque quien contesta ahora los haya quitado.
+  const mios = ((estado.respuestas || {})[m.id] || []).slice(-1)[0];
+  return {para, cc: unicos((c.cc || []).concat((mios && mios.dirs) || []).filter(noYo)).filter((x) => !para.some((p) => p.toLowerCase() === x.toLowerCase()))};
 }
 // Agenda para el autocompletado: sale de tus propios correos (a quién escribes y quién te escribe),
 // ordenada por frecuencia. Se guarda en el dispositivo; «Salir» la borra.
