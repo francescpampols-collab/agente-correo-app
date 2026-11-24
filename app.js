@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=67".slice(2));
+const VERSION = Number("v=68".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=67"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=68"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -909,6 +909,12 @@ async function buscar() {
   estado.buscando = false;
   pintar();
 }
+// Vacía la pestaña Buscar: resultados, texto buscado y la lista de «solo en Outlook».
+function limpiarBusqueda() {
+  if (estado.sel && (estado.datos.busca || []).some((m) => m.id === estado.sel)) cerrar();
+  estado.datos.busca = []; estado.buscado = false; estado.consulta = ""; estado.fuera = null;
+  pintar();
+}
 // Devuelve un correo archivado a la bandeja, en «Tuyos», para tratarlo como cualquier otro.
 function reactivar(m) {
   const antes = {categorias: m.categories, lista: estado.datos.busca.slice()};
@@ -956,6 +962,7 @@ function panelBusqueda() {
   return el("div", {class: "carta buscador"},
     el("label", {}, "Buscar en los correos archivados", campo),
     el("button", {class: "lleno", type: "button", disabled: estado.buscando ? "" : null, onclick: buscar}, estado.buscando ? "Buscando…" : "Buscar"),
+    (estado.datos.busca || []).length || estado.buscado ? el("button", {class: "plano", type: "button", onclick: limpiarBusqueda}, "Limpiar") : null,
     el("button", {class: "enlace izquierda", type: "button", onclick: () => { if (estado.fuera) { estado.fuera = null; pintar(); } else verFuera(); }}, estado.fuera ? "Ocultar los que dejaste solo en Outlook" : "Ver los correos que dejaste solo en Outlook"),
     leer("agente.ia") ? el("button", {class: "enlace izquierda", type: "button", onclick: probarModelos}, "Probar los modelos de IA") : null);
 }
