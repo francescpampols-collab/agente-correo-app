@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=68".slice(2));
+const VERSION = Number("v=69".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=68"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=69"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -812,8 +812,9 @@ function bloqueResumen(m, p, c) {
         const k = /^(Te piden|Puntos|Decide)\s*:\s*(.*)$/i.exec(l.trim());
         return k ? el("p", {class: "pide normal"}, el("b", {}, k[1] + ": "), k[2]) : el("p", {class: "pide normal"}, l.trim());
       }))
-      : lineasResumen(p.resumen).length ? el("ul", {class: "resumen-lista"}, ...lineasResumen(p.resumen).map((l) => el("li", {}, l)))
+      : lineasResumen(p.resumen).length ? fichaResumen(p.resumen, "resumen-lista")
       : p.pide ? el("p", {class: "pide normal"}, p.pide) : el("p", {class: "pide"}, "Sin resumen todavía."),
+    !largo && matices(m) ? el("span", {class: "aviso"}, "Tiene matices: la ficha los señala, pero conviene leer el correo entero.") : null,
     !largo ? listaFlojas(m) : null,
     !largo && c && !c.error && leer("agente.ia") ? el("button", {class: "enlace izquierda", type: "button", onclick: pedir}, "Resumir a fondo con IA") : null,
     estado.pideClave && !leer("agente.ia") && !(estado.redacta && estado.redacta.mid === m.id) ? activarIA() : null);
@@ -840,7 +841,7 @@ function cartaRespuesta(m) {
     respuestaMia(m),
     filaAdjuntos(m),
     resumenDesplegable(m),
-    p.pide ? el("p", {class: "pide"}, "Pide: " + p.pide) : null,
+    p.pide ? el("p", {class: "pide"}, (/^(te |solo |espera)/i.test(p.pide) ? "" : "Pide: ") + p.pide) : null,
     p.respuesta ? el("p", {class: "resp"}, p.respuesta) : el("p", {class: "pide"}, "Sin borrador todavía: ábrelo y pide la propuesta."),
     destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
     el("span", {class: "de"}, "Al enviar se archiva en " + carpetaDe(m).nombre),
@@ -1008,6 +1009,21 @@ function filaAdjuntos(m) {
 function lineasResumen(texto) {
   return String(texto || "").split(/\n+/).map((l) => l.replace(/^\s*[-•]\s*/, "").trim()).filter(Boolean);
 }
+// La ficha: cada línea del resumen puede traer una etiqueta fija («Quiere:», «De ti:», «Ojo:»…) que se destaca.
+// Los resúmenes antiguos, sin etiquetas, se siguen viendo como una lista normal.
+const ETIQUETA_FICHA = /^(Quiere|De ti|Plazo|Cifras|Adjuntos|Punto|Ojo)\s*:\s*(.+)$/i;
+function fichaResumen(texto, clase) {
+  const lineas = lineasResumen(texto);
+  if (!lineas.length) return null;
+  return el("ul", clase ? {class: clase} : {}, ...lineas.map((l) => {
+    const k = ETIQUETA_FICHA.exec(l);
+    if (!k) return el("li", {}, l);
+    const nombre = k[1].charAt(0).toUpperCase() + k[1].slice(1).toLowerCase();
+    return el("li", {class: nombre === "Ojo" ? "ojo" : nombre === "De ti" ? "deti" : ""}, el("b", {}, nombre + ": "), k[2]);
+  }));
+}
+// Cuántos matices («Ojo») trae la ficha: si hay alguno, se avisa antes de abrir.
+function matices(m) { return lineasResumen(prop(m).resumen).filter((l) => /^Ojo\s*:/i.test(l)).length; }
 // Afirmaciones de un report comercial que no llevan importe ni fecha: lo que hay que pedir que concreten.
 function flojas(m) {
   // Análisis antiguos (v<3) eran demasiado duros: no se enseñan hasta que el motor los rehaga con el criterio nuevo.
@@ -1032,9 +1048,10 @@ function listaFlojas(m) {
 function resumenDesplegable(m) {
   const lineas = lineasResumen(prop(m).resumen), n = flojas(m).length;
   if (!lineas.length && !n) return null;
+  const ojo = matices(m);
   const d = el("details", {class: "resumen-ext" + (n ? " con-flojas" : "")},
-    el("summary", {}, "Resumen", n ? el("span", {class: "marca cola"}, n + " para seguir") : null),
-    lineas.length ? el("ul", {}, ...lineas.map((l) => el("li", {}, l))) : null,
+    el("summary", {}, "Resumen", ojo ? el("span", {class: "marca cola"}, "Con matices") : null, n ? el("span", {class: "marca cola"}, n + " para seguir") : null),
+    fichaResumen(prop(m).resumen),
     listaFlojas(m));
   d.open = !!estado.resumenAbierto[m.id];
   d.addEventListener("toggle", () => { estado.resumenAbierto[m.id] = d.open; });
@@ -1373,8 +1390,16 @@ async function leerCriterios() {
 const SISTEMA_FILTRO = `Eres el filtro del correo de Francesc Pampols, administrador de Grup Pampols (embalaje, Lleida). Clasificas UN correo que ha recibido. ${AVISO_IA} Clasifica por lo que el remitente escribe ahora; los correos anteriores citados debajo solo sirven de contexto.
 Devuelve solo JSON válido con estos campos:
 - "tipo": "responder" (una persona espera una respuesta de Francesc), "boletin" (newsletter, publicidad o envío masivo), "archivar" (informativo que no le pide nada: notificaciones automáticas, acuses, agradecimientos, copias donde nadie le pregunta nada) o "pendiente" (le exige hacer algo que no es contestar, o no está claro).
-- "pide": una frase en castellano, 25 palabras como mucho, con lo que le piden o de qué va. Nunca vacío.
-- "resumen": de 2 a 6 líneas, cada una empezando por "- ", en castellano, 110 palabras como mucho. Lo esencial con nombres, cifras, fechas y plazos; lo importante de cada adjunto que hayas podido leer; y al final qué tiene que hacer o decidir Francesc, si hay algo.
+- "pide": una sola frase en castellano, de 16 palabras como mucho, que se lee en la lista antes de abrir el correo. Empieza por lo que significa para Francesc: "Te pide…", "Te pregunta…", "Espera tu…" (firma, pago, decisión), "Te propone…" o "Solo informa: …" si no le pide nada. Con el dato clave (qué, cuánto o para cuándo). Nunca vacío.
+- "resumen": una ficha para leer en el móvil sin abrir el correo. Líneas que empiezan por "- " seguidas de una etiqueta fija y dos puntos, en este orden, y SOLO las que apliquen:
+  "- Quiere: " lo que el remitente pide, propone o comunica, en una frase.
+  "- De ti: " lo que Francesc tiene que hacer o decidir (un sí o un no, elegir entre A y B, firmar, pagar…). Si no tiene que hacer nada, omítela.
+  "- Plazo: " la fecha o urgencia, si la hay.
+  "- Cifras: " importes, precios, cantidades y fechas que importan, con su unidad y a qué se refieren.
+  "- Adjuntos: " lo importante de cada adjunto que hayas podido leer (lo que dice, no su descripción) y si coincide o no con el texto del correo.
+  "- Punto: " una línea por cada asunto, condición o petición distinta, cuando el correo trae varios. Tantas como haya: no juntes ni dejes ninguno fuera.
+  "- Ojo: " una línea por cada matiz que una ficha aplana: tono (molestia, queja, urgencia, presión), condiciones o salvedades, algo que se da por hecho sin estar acordado, contradicciones con el hilo o con los adjuntos, ambigüedades, lo que no dice y debería, riesgos, o que varias personas esperan cosas distintas.
+  Frases cortas, con nombres, cifras y fechas exactas; en castellano. Un correo sencillo son 2 o 3 líneas. Un correo complicado o delicado (queja, tema de personal, negociación, conflicto, hilo largo con posturas distintas, varias decisiones enlazadas) NO se simplifica: pon todos los "Punto" y "Ojo" que hagan falta, hasta 350 palabras, y empieza los "Ojo" con uno que diga "conviene leer el original" y por qué. Esquemático no es incompleto: si dudas entre omitir un matiz o ponerlo, ponlo. En un boletín o aviso sin contenido, una sola línea "- Quiere: …".
 - "sin_concretar": solo para reports, informes o partes de comerciales; en cualquier otro correo, lista vacía. Francesc quiere seguir de cerca lo importante sin agobiar al comercial: elige como mucho DOS asuntos, los que más dinero mueven o los que más se arrastran, en los que el comercial da por hecha o muy probable una venta relevante sin decir cuánto ni cuándo ("nos pasará pedido", "comprará", "con intención de cerrar", una oferta grande sin fecha). Si no hay ninguno que de verdad lo merezca, lista vacía: es lo normal en un report correcto. NO incluyas pedidos ya hechos o enviados (por ejemplo "envía compra" o "nuevo pedido"), entregas, muestras, incidencias, recogidas, visitas de rutina ni clientes pequeños, aunque no lleven importe. Para cada asunto: "quien" (el comercial), "cliente", "dicho" (lo que afirma, en 12 palabras como mucho) y "falta" (el único dato que más ayudaría: normalmente la fecha prevista o el importe aproximado), en tono neutro, sin juzgar. En el "resumen" de un report di con naturalidad qué hay cerrado y qué son intenciones, sin tono de reproche.
 - "sospechoso": true si pide cambiar datos bancarios, pagos urgentes, credenciales o algo anómalo; si no, false.`;
 function avisoPropio(m) { return dir(m).toLowerCase() === "notifications@github.com" && /^\[francescpampols-collab\/agente-correo[^\]]*\]\s*Run (failed|cancelled|succeeded)/i.test(m.subject || ""); }
@@ -1395,7 +1420,7 @@ async function clasificarUno(m) {
   if (tipo === "archivar" && m.hasAttachments && /\b(report|reporte|informe|parte|partes)\b/i.test(m.subject || "")) tipo = "pendiente";
   const flojas = (Array.isArray(j.sin_concretar) ? j.sin_concretar : []).filter((x) => x && typeof x === "object" && String(x.cliente || "").trim()).slice(0, 2)
     .map((x) => ({quien: String(x.quien || "").trim().slice(0, 160), cliente: String(x.cliente || "").trim().slice(0, 160), dicho: String(x.dicho || "").trim().slice(0, 160), falta: String(x.falta || "").trim().slice(0, 160)}));
-  const datos = {tipo, pide, resumen: String(j.resumen || "").trim().slice(0, 1200), sin_concretar: flojas, v: 3, app: true};
+  const datos = {tipo, pide, resumen: String(j.resumen || "").trim().slice(0, 3000), sin_concretar: flojas, v: 3, app: true};
   if (j.sospechoso === true) { tipo = "pendiente"; Object.assign(datos, {tipo, aviso: "Sospechoso: revisa el remitente antes de hacer nada."}); }
   // Si el motor lo ha clasificado entretanto, manda el motor.
   const ahora = await api("GET", `/me/messages/${id(m.id)}?$select=id,categories`);

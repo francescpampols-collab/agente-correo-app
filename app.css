@@ -227,6 +227,10 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .resumen-ext[open] summary::before{transform:rotate(45deg)}
 .resumen-ext ul,.resumen-lista{margin:0;padding:2px 14px 12px 30px;display:flex;flex-direction:column;gap:5px;font-size:15px;color:var(--tinta)}
 .resumen-lista{padding:0 0 0 18px}
+.resumen-ext li b,.resumen-lista li b{font-weight:600;color:var(--azul-osc)}
+.resumen-ext li.deti,.resumen-lista li.deti{font-weight:500}
+.resumen-ext li.ojo,.resumen-lista li.ojo{list-style:none;margin-left:-18px;padding:5px 9px;border-radius:6px;background:var(--ambar-fondo);color:var(--ambar)}
+.resumen-ext li.ojo b,.resumen-lista li.ojo b{color:var(--ambar)}
 @media (prefers-reduced-motion:reduce){.resumen-ext summary::before{transition:none}}
 .fila>.reac{flex:0 0 52px;padding:0;display:flex;align-items:center;justify-content:center;color:var(--azul-osc)}
 .reac.activa{background:#E3ECF6;border-color:var(--azul)}
