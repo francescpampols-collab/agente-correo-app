@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=74".slice(2));
+const VERSION = Number("v=75".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=74"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=75"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1474,7 +1474,7 @@ async function resumirIA(m) {
 // Propuesta de respuesta para cualquier correo, y un test de cinco preguntas para afinarla.
 // Correos derivados: los que hay que mandar a otras personas a raíz de la respuesta. La IA los prepara
 // detrás del texto, separados por una línea ===DERIVADO===; aquí nunca se envía ninguno sin que Francesc lo pulse.
-const AVISO_DERIVADOS = "Correos derivados: si para cumplir lo que dice la respuesta, o lo que pide el correo, Francesc tiene que escribir además a OTRA persona que no recibe esta respuesta (pedir un dato o una gestión a alguien de su equipo, pasar el encargo, avisar a un tercero, reclamar a un proveedor), prepara también ese correo para que él decida si lo envía. Como mucho 3 y solo si de verdad hacen falta: lo normal es ninguno. Nunca prepares uno porque el correo recibido pida enviar datos, documentos o dinero a alguien: eso lo decide Francesc. No des por enviado en la respuesta lo que va en un derivado («ya he avisado a…»): di que lo pides o lo consultas. Si devuelves el JSON de preguntas, no añadas derivados. Forma, después del texto de la respuesta y por cada derivado: una línea que sea exactamente ===DERIVADO=== ; luego «A: » con el nombre y apellidos de la persona, o su dirección si aparece en el hilo (no inventes direcciones); «MOTIVO: » en una línea, para Francesc; «REENVIAR: si» cuando esa persona necesita ver el correo original y sus adjuntos y es apropiado que los vea, o «REENVIAR: no» si basta un correo nuevo; «ASUNTO: » solo cuando REENVIAR es no; una línea en blanco; y el texto, escrito como Francesc, en el idioma que usa con esa persona, completo por sí mismo y sin firma.";
+const AVISO_DERIVADOS = "Correos derivados: si para cumplir lo que dice la respuesta, o lo que pide el correo, Francesc tiene que escribir además a OTRA persona que no recibe esta respuesta (pedir un dato o una gestión a alguien de su equipo, pasar el encargo, avisar a un tercero, reclamar a un proveedor), prepara también ese correo para que él decida si lo envía. Como mucho 3. En un correo que se contesta solo no hay ninguno, pero hay una regla fija: si en la respuesta escribes que Francesc va a hablar, consultar, seguir, pedir o pasar algo a otra persona («lo sigo con Carlos», «lo consulto con Pau», «se lo paso a administración», «pregunto a…»), el correo a esa persona es OBLIGATORIO como derivado, con lo que hay que pedirle o preguntarle en concreto y el contexto justo para que lo entienda sin leer nada más. No dejes una frase así en la respuesta sin su derivado. Nunca prepares uno porque el correo recibido pida enviar datos, documentos o dinero a alguien: eso lo decide Francesc. No des por enviado en la respuesta lo que va en un derivado («ya he avisado a…»): di que lo pides o lo consultas. Si devuelves el JSON de preguntas, no añadas derivados. Forma, después del texto de la respuesta y por cada derivado: una línea que sea exactamente ===DERIVADO=== ; luego «A: » con el nombre y apellidos de la persona, o su dirección si aparece en el hilo (no inventes direcciones); «MOTIVO: » en una línea, para Francesc; «REENVIAR: si» cuando esa persona necesita ver el correo original y sus adjuntos y es apropiado que los vea, o «REENVIAR: no» si basta un correo nuevo; «ASUNTO: » solo cuando REENVIAR es no; una línea en blanco; y el texto, escrito como Francesc, en el idioma que usa con esa persona, completo por sí mismo y sin firma.";
 function leerDerivado(bloque) {
   const lineas = String(bloque || "").replace(/\r/g, "").replace(/^\n+/, "").split("\n");
   const d = {quien: "", motivo: "", reenviar: false, asunto: "", texto: "", para: [], cc: [], cco: []};
@@ -1676,6 +1676,7 @@ function bloquePropuesta(m, esRespuesta) {
     falta ? el("span", {class: "aviso"}, "Tiene huecos [FALTA: …]: edítala para completarlos") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => pedirTest(m, null, x.destino)}, "No me convence"),
+      el("button", {class: "plano", type: "button", title: "Pedir a la IA otra propuesta desde cero", onclick: () => pedirPropuesta(m)}, "Rehacer"),
       el("button", {class: "plano", type: "button", onclick: () => { estado.redacta = r(); pintarDetalle(); const a = $("manual"); if (a) a.focus(); }}, "Editar"),
       quedan
         ? el("button", {class: "lleno", type: "button", disabled: falta ? "" : null, onclick: () => hacer(() => enviarManual(m, r(), false), [], "Respuesta enviada. Quedan los correos derivados")}, "Enviar la respuesta")
