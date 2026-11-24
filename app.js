@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=65".slice(2));
+const VERSION = Number("v=66".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -570,7 +570,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=65"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=66"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1680,7 +1680,7 @@ function barraOutlook(m) {
     // Las reacciones (pulgar, corazón…) solo las puede poner Outlook: este botón abre ahí el mismo correo.
     el("button", {class: "accion" + (estado.reaccionando ? " activa" : ""), type: "button", "aria-pressed": estado.reaccionando ? "true" : "false", onclick: () => { estado.reaccionando = !estado.reaccionando; pintarDetalle(); }}, icono("reaccion"), "Reaccionar"),
     // Archivar también desde arriba, sin bajar hasta el final del correo.
-    m.archivado ? null : el("button", {class: "accion verde", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, icono("archivo"), "Archivar"),
+    m.archivado ? null : el("button", {class: "accion verde", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, icono("archivo"), "Archivar en " + carpetaDe(m).nombre),
     m.archivado ? null : el("button", {class: "accion" + (eligiendo === m.id ? " activa" : ""), type: "button", "aria-expanded": eligiendo === m.id ? "true" : "false", onclick: () => { eligiendo = eligiendo === m.id ? null : m.id; estado.carpetaArriba = true; pintar(); pintarDetalle(); }}, icono("carpeta"), "Otra carpeta"));
 }
 function panelManual(m) {
