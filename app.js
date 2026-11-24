@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=69".slice(2));
+const VERSION = Number("v=70".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=69"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=70"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1637,16 +1637,50 @@ async function cargarContactos() {
     for (const m of env.value || []) for (const r of (m.toRecipients || []).concat(m.ccRecipients || [])) sumar(r.emailAddress, 3);
     const rec = await api("GET", "/me/messages?" + new URLSearchParams({"$select": "from,toRecipients,ccRecipients", "$orderby": "receivedDateTime desc", "$top": "250"}));
     for (const m of rec.value || []) { sumar((m.from || {}).emailAddress, 2); for (const r of (m.toRecipients || []).concat(m.ccRecipients || [])) sumar(r.emailAddress, 1); }
-    if (cuenta.size) { estado.contactos = Array.from(cuenta.values()).sort((x, y) => y.peso - x.peso).slice(0, 600); guardar("agente.contactos", estado.contactos); }
+    if (cuenta.size) {
+      // Los encontrados buscando en el buzón (peso 0) se conservan aunque no salgan en lo reciente.
+      const extra = (estado.contactos || []).filter((c) => c && c.a && !cuenta.has(c.a.toLowerCase())).map((c) => ({a: c.a, n: c.n || "", peso: 0})).slice(0, 300);
+      estado.contactos = Array.from(cuenta.values()).sort((x, y) => y.peso - x.peso).slice(0, 600).concat(extra);
+      guardar("agente.contactos", estado.contactos);
+    }
   } catch (e) {}
 }
+const sinTildes = (x) => String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+// Orden de las sugerencias: primero lo que EMPIEZA por lo escrito (nombre o dirección), luego lo que
+// empieza así alguna de sus palabras (un apellido), y al final lo que solo lo contiene.
 function sugerir(texto, yaPuestos) {
-  const t = texto.trim().toLowerCase();
-  if (t.length < 2) return [];
-  const sin = (x) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const b = sin(t);
-  return (estado.contactos || []).filter((c) => !yaPuestos.has(c.a.toLowerCase()) && (sin(c.n).includes(b) || c.a.toLowerCase().includes(b)))
-    .sort((x, y) => (sin(y.n).startsWith(b) || y.a.toLowerCase().startsWith(b) ? 1 : 0) - (sin(x.n).startsWith(b) || x.a.toLowerCase().startsWith(b) ? 1 : 0) || y.peso - x.peso).slice(0, 6);
+  const b = sinTildes(texto.trim());
+  if (b.length < 2) return [];
+  const rango = (c) => {
+    const n = sinTildes(c.n), a = c.a.toLowerCase();
+    if (n.startsWith(b) || a.startsWith(b)) return 0;
+    if (n.split(/[^a-z0-9]+/).some((p) => p.startsWith(b)) || a.split(/[^a-z0-9]+/).some((p) => p.startsWith(b))) return 1;
+    return n.includes(b) || a.includes(b) ? 2 : 9;
+  };
+  return (estado.contactos || []).filter((c) => !yaPuestos.has(c.a.toLowerCase())).map((c) => [rango(c), c]).filter((x) => x[0] < 9)
+    .sort((x, y) => x[0] - y[0] || y[1].peso - x[1].peso).slice(0, 8).map((x) => x[1]);
+}
+// Si la agenda del dispositivo se queda corta, se busca en todo el buzón (cualquier correo, de cualquier año)
+// a quien tenga ese nombre o dirección, y se suma a la agenda.
+const remotas = new Map();
+function buscarContactos(texto) {
+  const b = sinTildes(texto.trim()).replace(/[^a-z0-9@._-]/g, " ").trim().split(/\s+/)[0] || "";
+  if (b.length < 3) return Promise.resolve(false);
+  if (!remotas.has(b)) remotas.set(b, (async () => {
+    const j = await api("GET", "/me/messages?" + new URLSearchParams({"$search": `"participants:${b}*"`, "$select": "from,toRecipients,ccRecipients", "$top": "40"}));
+    const sabidos = new Set((estado.contactos || []).map((c) => c.a.toLowerCase()));
+    let nuevos = 0;
+    for (const m of j.value || []) for (const r of [m.from].concat(m.toRecipients || [], m.ccRecipients || [])) {
+      const e = (r || {}).emailAddress || {}, a = String(e.address || "").trim(), k = a.toLowerCase();
+      if (!CORREO.test(a) || k === estado.yo || sabidos.has(k)) continue;
+      if (!sinTildes(e.name).includes(b) && !k.includes(b)) continue;
+      sabidos.add(k); nuevos++;
+      estado.contactos = (estado.contactos || []).concat({a, n: e.name && e.name.toLowerCase() !== k ? e.name : "", peso: 0});
+    }
+    if (nuevos) guardar("agente.contactos", estado.contactos.slice(0, 900));
+    return nuevos > 0;
+  })().catch(() => { remotas.delete(b); return false; }));
+  return remotas.get(b);
 }
 // Para, CC y CCO como en Outlook: fichas que se quitan, se añaden con sugerencias al escribir
 // y se mueven de un campo a otro (arrastrando en el PC; tocando la ficha en el móvil).
@@ -1684,7 +1718,14 @@ function camposDestino(d, pref) {
         return b;
       }));
     };
-    campo.addEventListener("input", pintarSugerencias);
+    let espera = null;
+    campo.addEventListener("input", () => {
+      pintarSugerencias();
+      clearTimeout(espera);
+      const escrito = campo.value;
+      // Solo se pregunta al buzón si lo de casa no llena la lista, y tras una pausa al teclear.
+      if (sugerir(escrito, puestos()).length < 4) espera = setTimeout(() => { buscarContactos(escrito).then((hay) => { if (hay && campo.value === escrito && document.body.contains(campo)) pintarSugerencias(); }); }, 350);
+    });
     campo.addEventListener("focus", () => { cargarContactos().then(pintarSugerencias); });
     campo.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" && e.key !== "," && e.key !== ";") return;
