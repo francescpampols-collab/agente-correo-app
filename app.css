@@ -289,3 +289,5 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 
 .visor-paginas.prueba{align-items:stretch;padding:16px 20px}
 .visor-paginas.prueba .pide{margin:8px 0;font-size:17px;line-height:1.4;overflow-wrap:anywhere}
+
+.eti .pista{font-weight:400;color:var(--gris,#6B7684);text-transform:none;letter-spacing:0}

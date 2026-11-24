@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=78".slice(2));
+const VERSION = Number("v=79".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=78"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=79"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -2078,7 +2078,7 @@ function construirDetalle(d) {
     bloqueResumen(m, p, c),
     p.aviso ? el("span", {class: "aviso"}, (esRespuesta ? "Revisar bien: " : "") + p.aviso) : null,
     el("div", Object.assign({class: "carta correo"}, c && !c.error && c.html && !estado.soloTexto ? {"data-clave": `correo|${m.id}|${c.html.length}`} : {}),
-      el("span", {class: "eti"}, "Correo"),
+      el("span", {class: "eti"}, "Correo", "ontouchstart" in window ? el("span", {class: "pista"}, " · pellizca o toca dos veces para ampliar") : null),
       !c ? el("p", {class: "pide"}, "Cargando…")
         : c.error ? el("p", {class: "pide"}, "No se ha podido cargar el correo: " + c.error)
         : c.html && !estado.soloTexto ? marcoCorreo(c.html)

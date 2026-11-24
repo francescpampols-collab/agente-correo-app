@@ -49,13 +49,60 @@
     document.body.querySelectorAll("hr").forEach((h) => h.remove());
   }
 
+  // encaje: reducción para que un correo ancho quepa en la pantalla. ampliacion: lo que amplía Francesc con los dedos.
+  let encaje = 1, ampliacion = 1;
+  function aplicar(avisar) {
+    const z = encaje * ampliacion;
+    document.body.style.zoom = Math.abs(z - 1) < 0.005 ? "" : String(z);
+    if (avisar) parent.postMessage({tipo: "alto", alto: Math.ceil(document.documentElement.scrollHeight)}, "*");
+  }
   function ajustar() {
     const b = document.body;
     b.style.zoom = "";
     const ancho = document.documentElement.scrollWidth, hueco = window.innerWidth;
-    if (hueco > 0 && ancho > hueco + 2) b.style.zoom = String(Math.max(0.3, hueco / ancho));
-    parent.postMessage({tipo: "alto", alto: Math.ceil(document.documentElement.scrollHeight)}, "*");
+    encaje = hueco > 0 && ancho > hueco + 2 ? Math.max(0.3, hueco / ancho) : 1;
+    aplicar(true);
   }
+  // Ampliar con dos dedos (pellizco) o con doble toque. Ampliado, el correo se desplaza de lado dentro de su recuadro.
+  let d0 = 0, a0 = 1, cx = 0, px = 0, ultimo = 0, ux = 0, uy = 0, movido = false;
+  const separacion = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const tope = () => Math.max(3, 1.6 / encaje);
+  document.addEventListener("touchstart", (e) => {
+    movido = false;
+    if (e.touches.length !== 2) return;
+    d0 = separacion(e.touches); a0 = ampliacion;
+    cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    px = (window.scrollX + cx) / (encaje * ampliacion);
+  }, {passive: true});
+  document.addEventListener("touchmove", (e) => {
+    movido = true;
+    if (e.touches.length !== 2 || !d0) return;
+    e.preventDefault();
+    ampliacion = Math.min(tope(), Math.max(1, a0 * separacion(e.touches) / d0));
+    aplicar(false);
+    window.scrollTo(Math.max(0, px * encaje * ampliacion - cx), window.scrollY);
+  }, {passive: false});
+  document.addEventListener("touchend", (e) => {
+    if (d0) {
+      if (e.touches.length < 2) { d0 = 0; if (ampliacion < 1.08) ampliacion = 1; aplicar(true); }
+      ultimo = 0;
+      return;
+    }
+    const t = e.changedTouches[0];
+    if (!t || movido || e.touches.length) return;
+    const ahora = Date.now();
+    if (ahora - ultimo < 320 && Math.hypot(t.clientX - ux, t.clientY - uy) < 32) {
+      // Doble toque: del tamaño encajado al tamaño real (o al doble si ya cabía), y vuelta.
+      const antes = encaje * ampliacion, punto = (window.scrollX + t.clientX) / antes;
+      ampliacion = ampliacion > 1.05 ? 1 : Math.min(tope(), encaje < 0.8 ? 1 / encaje : 2);
+      aplicar(true);
+      window.scrollTo(Math.max(0, punto * encaje * ampliacion - t.clientX), window.scrollY);
+      ultimo = 0;
+      e.preventDefault();
+      return;
+    }
+    ultimo = ahora; ux = t.clientX; uy = t.clientY;
+  }, {passive: false});
 
   window.addEventListener("message", (e) => {
     if (e.source !== parent || pintado) return;
