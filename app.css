@@ -291,3 +291,9 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .visor-paginas.prueba .pide{margin:8px 0;font-size:17px;line-height:1.4;overflow-wrap:anywhere}
 
 .eti .pista{font-weight:400;color:var(--gris,#6B7684);text-transform:none;letter-spacing:0}
+
+.pedir-ia{display:flex;gap:10px;flex-wrap:wrap}
+.sobre .punto{border-left:4px solid #CBD3DC;padding:2px 0 2px 12px;display:flex;flex-direction:column;gap:6px}
+.sobre .cita{margin:0;color:#55606E;font-style:italic;font-size:.93em}
+.sobre textarea.verde{color:#1E7B34;font-weight:700;min-height:74px}
+.sobre textarea.corta{min-height:96px}
