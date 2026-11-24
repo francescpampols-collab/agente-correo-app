@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=73".slice(2));
+const VERSION = Number("v=74".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=73"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=74"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1508,7 +1508,9 @@ async function resolverDerivados(m, x) {
     if (dir0) { d.para = [dir0]; continue; }
     let s = sugerir(q, new Set());
     if (!s.length) { await buscarContactos(q.split(/\s+/).slice(-1)[0] || q).catch(() => {}); await buscarContactos(q).catch(() => {}); s = sugerir(q, new Set()); }
-    if (s.length) { d.para = [s[0].a]; d.hallado = s[0].n || s[0].a; }
+    // Solo se rellena si no hay duda: un único candidato, o nombre y apellido que coinciden. Si hay varios, eliges tú.
+    if (s.length === 1 || (s.length && q.split(/\s+/).length > 1)) { d.para = [s[0].a]; d.hallado = s[0].n || s[0].a; }
+    else if (s.length) d.varios = s.length;
   }
   repintarSi(m.id);
 }
@@ -1548,7 +1550,7 @@ function cartasDerivados(m, x) {
     return el("div", {class: "carta derivado"},
       el("span", {class: "eti"}, "Correo derivado " + (i + 1) + " · " + (d.reenviar ? "reenvía el correo original" : "correo nuevo")),
       d.motivo ? el("p", {class: "pide normal"}, d.motivo) : null,
-      el("p", {class: "pide"}, "La IA lo dirige a: " + d.quien + (d.para.length ? "" : ". No he encontrado su dirección: ponla en «Para».")),
+      el("p", {class: "pide"}, "La IA lo dirige a: " + d.quien + (d.para.length ? "" : d.varios ? ". Hay " + d.varios + " contactos que encajan: elige en «Para»." : ". No he encontrado su dirección: ponla en «Para».")),
       camposDestino(d, "d" + i + "-", d.reenviar ? m : null),
       d.reenviar ? null : el("label", {}, "Asunto", asunto),
       fuera.length ? el("span", {class: "aviso"}, "Fuera de la empresa: " + fuera.join(", ") + ". Comprueba que es quien debe recibirlo" + (d.reenviar ? " y que puede ver el correo original." : ".")) : null,
@@ -1747,11 +1749,14 @@ const sinTildes = (x) => String(x || "").normalize("NFD").replace(/[\u0300-\u036
 function sugerir(texto, yaPuestos) {
   const b = sinTildes(texto.trim());
   if (b.length < 2) return [];
+  // Con varias palabras («fernando peris») tienen que aparecer todas, en el orden que sea.
+  const palabras = b.split(/[^a-z0-9@._-]+/).filter(Boolean);
   const rango = (c) => {
     const n = sinTildes(c.n), a = c.a.toLowerCase();
     if (n.startsWith(b) || a.startsWith(b)) return 0;
-    if (n.split(/[^a-z0-9]+/).some((p) => p.startsWith(b)) || a.split(/[^a-z0-9]+/).some((p) => p.startsWith(b))) return 1;
-    return n.includes(b) || a.includes(b) ? 2 : 9;
+    const trozos = n.split(/[^a-z0-9]+/).concat(a.split(/[^a-z0-9]+/));
+    if (palabras.length && palabras.every((p) => trozos.some((t) => t.startsWith(p)))) return 1;
+    return palabras.length && palabras.every((p) => n.includes(p) || a.includes(p)) ? 2 : 9;
   };
   return (estado.contactos || []).filter((c) => !yaPuestos.has(c.a.toLowerCase())).map((c) => [rango(c), c]).filter((x) => x[0] < 9)
     .sort((x, y) => x[0] - y[0] || y[1].peso - x[1].peso).slice(0, 8).map((x) => x[1]);
@@ -1768,7 +1773,13 @@ function buscarContactos(texto) {
     let nuevos = 0;
     for (const m of j.value || []) for (const r of [m.from].concat(m.toRecipients || [], m.ccRecipients || [])) {
       const e = (r || {}).emailAddress || {}, a = String(e.address || "").trim(), k = a.toLowerCase();
-      if (!CORREO.test(a) || k === estado.yo || sabidos.has(k)) continue;
+      if (!CORREO.test(a) || k === estado.yo) continue;
+      if (sabidos.has(k)) {
+        // Ya estaba, pero sin nombre (lo añadiste escribiendo solo la dirección): se le pone el que trae el correo.
+        const ya = e.name && e.name.toLowerCase() !== k ? (estado.contactos || []).find((c) => c.a.toLowerCase() === k && !c.n) : null;
+        if (ya) { ya.n = e.name; nuevos++; }
+        continue;
+      }
       if (!sinTildes(e.name).includes(b) && !k.includes(b)) continue;
       sabidos.add(k); nuevos++;
       estado.contactos = (estado.contactos || []).concat({a, n: e.name && e.name.toLowerCase() !== k ? e.name : "", peso: 0});
