@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=79".slice(2));
+const VERSION = Number("v=80".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -369,7 +369,9 @@ function apuntarSalida(mid, dentro) {
 }
 async function archivar(m) {
   apuntarSalida(m.id, true);
-  await api("PATCH", `/me/messages/${id(m.id)}`, {categories: (m.categories || []).filter((c) => !c.startsWith("Agente:"))});
+  // Archivar es darlo por visto: se guarda marcado como leído, igual que al archivar en Outlook.
+  await api("PATCH", `/me/messages/${id(m.id)}`, {categories: (m.categories || []).filter((c) => !c.startsWith("Agente:")), isRead: true});
+  m.isRead = true;
   await api("POST", `/me/messages/${id(m.id)}/move`, {destinationId: carpetaDe(m).id});
   apuntarSalida(m.id, false);
 }
@@ -605,7 +607,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=79"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=80"});
   marco.html = html;
   marcos.push(marco);
   return marco;
