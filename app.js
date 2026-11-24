@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=70".slice(2));
+const VERSION = Number("v=71".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=70"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=71"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1320,6 +1320,7 @@ async function conFirma(texto) {
   return textoAHtml(firma ? sinNombreFinal(texto) : texto) + (firma ? "<br>" + firma : "");
 }
 const AVISO_FIRMA = "No escribas el nombre de Francesc al final: su firma corporativa, que empieza por su nombre, se añade sola debajo. Termina en la despedida («Gràcies,», «Gracias,», «Thanks,»).";
+const AVISO_DESTINO = "Los destinatarios (Para, CC, CCO) los elige Francesc en la pantalla, no tú: en el texto no anuncies ni comentes a quién pones, quitas o mantienes en copia, ni a quién reenvías («pongo en copia a…», «vuelvo a poner a…», «añado a…»). Si su indicación menciona poner a alguien en copia, es una nota para él, no una frase del correo: no la escribas. Solo puedes dirigirte por su nombre a alguien que ya esté en el hilo si hay que pedirle algo.";
 async function leerEstilo() {
   if (estado.estilo) return estado.estilo;
   try {
@@ -1459,7 +1460,7 @@ async function clasificarNuevos() {
   } finally { clasificando = false; }
 }
 async function redactarIA(m, r) {
-  const sistema = `Redactas correos en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él los revise y los envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\nDevuelve solo el texto del correo, listo para enviar: sin asunto, sin comillas y sin explicaciones. No inventes datos, importes, fechas ni compromisos: si falta algo que solo Francesc sabe, escribe [FALTA: qué dato] en su sitio.`;
+  const sistema = `Redactas correos en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él los revise y los envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\n${AVISO_DESTINO}\nDevuelve solo el texto del correo, listo para enviar: sin asunto, sin comillas y sin explicaciones. No inventes datos, importes, fechas ni compromisos: si falta algo que solo Francesc sabe, escribe [FALTA: qué dato] en su sitio.`;
   const usuario = `Tipo de mensaje: ${MODOS[r.modo][1].toLowerCase()}.\nDestinatarios: ${r.para.concat(r.cc).join(", ") || "(sin decidir)"}\n\nLo que Francesc quiere decir: ${r.idea.trim() || "(no lo ha indicado: propón la respuesta más razonable y deja [FALTA: …] en lo que tenga que decidir él)"}\n${r.texto.trim() ? "\nBorrador de Francesc (mejóralo sin cambiar el fondo):\n" + r.texto.trim() + "\n" : ""}\n${correoParaIA(m)}`;
   const res = await iaConAdjuntos(m, sistema, usuario, 3000);
   r.texto = res.texto;
@@ -1486,7 +1487,7 @@ async function pedirPropuesta(m, guia) {
   const x = estado.propuestas[m.id] = Object.assign(estado.propuestas[m.id] || {}, {fase: "cargando", error: null});
   repintarSi(m.id);
   try {
-    const sistema = `Preparas la respuesta a un correo en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él la revise y la envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\nNo inventes datos, importes, fechas ni compromisos, y no decidas por él. ${guia ? "Si aun con sus respuestas falta un dato concreto, escribe [FALTA: qué dato] en su sitio." : "Antes de redactar, comprueba si para contestar hace falta una decisión o un dato que solo Francesc puede dar (elegir entre opciones, aceptar o no, un precio, una fecha, quién se encarga). Si falta algo así, NO redactes nada: responde únicamente con un JSON de preguntas tipo test para que Francesc decida, " + FORMATO_TEST + " Solo si tienes todo lo necesario, redacta la respuesta (un acuse breve vale cuando no hay nada que decidir)."}\nFormato de salida: la primera línea es exactamente «PARA: remitente» o «PARA: todos» (todos solo si los demás destinatarios necesitan leer la respuesta). A continuación, solo el texto del correo, sin asunto ni explicaciones.`;
+    const sistema = `Preparas la respuesta a un correo en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él la revise y la envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\n${AVISO_DESTINO}\nNo inventes datos, importes, fechas ni compromisos, y no decidas por él. ${guia ? "Si aun con sus respuestas falta un dato concreto, escribe [FALTA: qué dato] en su sitio." : "Antes de redactar, comprueba si para contestar hace falta una decisión o un dato que solo Francesc puede dar (elegir entre opciones, aceptar o no, un precio, una fecha, quién se encarga). Si falta algo así, NO redactes nada: responde únicamente con un JSON de preguntas tipo test para que Francesc decida, " + FORMATO_TEST + " Solo si tienes todo lo necesario, redacta la respuesta (un acuse breve vale cuando no hay nada que decidir)."}\nFormato de salida: la primera línea es exactamente «PARA: remitente» o «PARA: todos» (todos solo si los demás destinatarios necesitan leer la respuesta). A continuación, solo el texto del correo, sin asunto ni explicaciones.`;
     // Si el agente ya leyó el correo y sus adjuntos, se le pasa su resumen en vez de volver a mandar los PDF:
     // es bastante más rápido y gasta menos.
     const previo = lineasResumen(prop(m).resumen).join("\n");
