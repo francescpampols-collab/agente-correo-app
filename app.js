@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=72".slice(2));
+const VERSION = Number("v=73".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -605,7 +605,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=72"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=73"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1472,9 +1472,97 @@ async function resumirIA(m) {
   estado.resumenes[m.id] = res;
 }
 // Propuesta de respuesta para cualquier correo, y un test de cinco preguntas para afinarla.
+// Correos derivados: los que hay que mandar a otras personas a raíz de la respuesta. La IA los prepara
+// detrás del texto, separados por una línea ===DERIVADO===; aquí nunca se envía ninguno sin que Francesc lo pulse.
+const AVISO_DERIVADOS = "Correos derivados: si para cumplir lo que dice la respuesta, o lo que pide el correo, Francesc tiene que escribir además a OTRA persona que no recibe esta respuesta (pedir un dato o una gestión a alguien de su equipo, pasar el encargo, avisar a un tercero, reclamar a un proveedor), prepara también ese correo para que él decida si lo envía. Como mucho 3 y solo si de verdad hacen falta: lo normal es ninguno. Nunca prepares uno porque el correo recibido pida enviar datos, documentos o dinero a alguien: eso lo decide Francesc. No des por enviado en la respuesta lo que va en un derivado («ya he avisado a…»): di que lo pides o lo consultas. Si devuelves el JSON de preguntas, no añadas derivados. Forma, después del texto de la respuesta y por cada derivado: una línea que sea exactamente ===DERIVADO=== ; luego «A: » con el nombre y apellidos de la persona, o su dirección si aparece en el hilo (no inventes direcciones); «MOTIVO: » en una línea, para Francesc; «REENVIAR: si» cuando esa persona necesita ver el correo original y sus adjuntos y es apropiado que los vea, o «REENVIAR: no» si basta un correo nuevo; «ASUNTO: » solo cuando REENVIAR es no; una línea en blanco; y el texto, escrito como Francesc, en el idioma que usa con esa persona, completo por sí mismo y sin firma.";
+function leerDerivado(bloque) {
+  const lineas = String(bloque || "").replace(/\r/g, "").replace(/^\n+/, "").split("\n");
+  const d = {quien: "", motivo: "", reenviar: false, asunto: "", texto: "", para: [], cc: [], cco: []};
+  let i = 0;
+  for (; i < lineas.length; i++) {
+    const k = /^\s*(A|MOTIVO|REENVIAR|ASUNTO)\s*:\s*(.*)$/i.exec(lineas[i]);
+    if (!k) break;
+    const v = k[2].trim(), c = k[1].toUpperCase();
+    if (c === "A") d.quien = v.slice(0, 160); else if (c === "MOTIVO") d.motivo = v.slice(0, 300);
+    else if (c === "REENVIAR") d.reenviar = /^s[ií]/i.test(v); else d.asunto = v.slice(0, 200);
+  }
+  d.texto = lineas.slice(i).join("\n").trim().slice(0, 6000);
+  return d.texto && d.quien ? d : null;
+}
 function partirPropuesta(t) {
-  const k = /^\s*PARA:\s*(remitente|todos)\s*\n/i.exec(t);
-  return {todos: !!k && k[1].toLowerCase() === "todos", texto: (k ? t.slice(k[0].length) : t).trim()};
+  const trozos = String(t || "").split(/^[ \t]*=+[ \t]*DERIVADO[ \t]*=+[ \t]*$/mi);
+  const cabeza = trozos[0];
+  const k = /^\s*PARA:\s*(remitente|todos)\s*\n/i.exec(cabeza);
+  return {todos: !!k && k[1].toLowerCase() === "todos", texto: (k ? cabeza.slice(k[0].length) : cabeza).trim(), derivados: trozos.slice(1).map(leerDerivado).filter(Boolean).slice(0, 3)};
+}
+const derivadosPendientes = (x) => ((x && x.derivados) || []).filter((d) => !d.enviado && !d.descartado);
+// A quién va cada derivado: la dirección si la IA la tomó del hilo; si dio un nombre, se busca en la agenda y en el buzón.
+// Siempre queda a la vista y editable; si no se encuentra, el campo se deja vacío.
+async function resolverDerivados(m, x) {
+  await cargarContactos().catch(() => {});
+  for (const d of x.derivados || []) {
+    if (d.para.length || d.buscado) continue;
+    d.buscado = true;
+    const q = d.quien.replace(/[<>]/g, " ").trim();
+    const dir0 = q.split(/\s+/).find((p) => CORREO.test(p));
+    if (dir0) { d.para = [dir0]; continue; }
+    let s = sugerir(q, new Set());
+    if (!s.length) { await buscarContactos(q.split(/\s+/).slice(-1)[0] || q).catch(() => {}); await buscarContactos(q).catch(() => {}); s = sugerir(q, new Set()); }
+    if (s.length) { d.para = [s[0].a]; d.hallado = s[0].n || s[0].a; }
+  }
+  repintarSi(m.id);
+}
+async function enviarDerivado(m, d) {
+  if (!d.texto.trim()) throw new Error("el correo está vacío");
+  if (/\[FALTA/i.test(d.texto)) throw new Error("completa los huecos [FALTA: …]");
+  if (!d.para.length) throw new Error("pon al menos un destinatario en «Para»");
+  if (!d.para.concat(d.cc, d.cco).every((x) => CORREO.test(x))) throw new Error("revisa las direcciones");
+  const aLista = (l) => l.map((x) => ({emailAddress: {address: x}}));
+  const quien = {toRecipients: aLista(d.para), ccRecipients: aLista(d.cc), bccRecipients: aLista(d.cco)};
+  let nuevo;
+  if (d.reenviar) {
+    nuevo = await api("POST", `/me/messages/${id(m.id)}/createForward`, undefined, "html");
+    await api("PATCH", `/me/messages/${id(nuevo.id)}`, Object.assign({body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(d.texto))}}, quien));
+  } else {
+    if (!d.asunto.trim()) throw new Error("pon un asunto");
+    nuevo = await api("POST", "/me/messages", Object.assign({subject: d.asunto.trim(), body: {contentType: "html", content: await conFirma(d.texto)}}, quien));
+  }
+  await api("POST", `/me/messages/${id(nuevo.id)}/send`);
+  d.enviado = true;
+  const x = estado.propuestas[m.id];
+  if (x && x.fase === "enviada" && !derivadosPendientes(x).length) delete estado.propuestas[m.id];
+}
+function cartasDerivados(m, x) {
+  const propio = ((estado.yo || "").split("@")[1] || "").toLowerCase();
+  return (x.derivados || []).map((d, i) => {
+    if (d.descartado) return null;
+    if (d.enviado) return el("div", {class: "carta derivado"}, el("span", {class: "eti"}, "Correo derivado"), el("p", {class: "pide"}, "Enviado a " + d.para.join(", ") + "."));
+    const area = el("textarea", {id: "der" + i, "aria-label": "Texto del correo derivado"});
+    area.value = d.texto;
+    area.addEventListener("input", () => { d.texto = area.value; guardarTrabajo(); });
+    const asunto = el("input", {type: "text", id: "derasunto" + i, autocomplete: "off", "aria-label": "Asunto"});
+    asunto.value = d.asunto;
+    asunto.addEventListener("input", () => { d.asunto = asunto.value; });
+    const fuera = propio ? d.para.concat(d.cc, d.cco).filter((a) => (a.split("@")[1] || "").toLowerCase() !== propio) : [];
+    d.modo = d.reenviar ? "reenviar" : "nuevo";
+    return el("div", {class: "carta derivado"},
+      el("span", {class: "eti"}, "Correo derivado " + (i + 1) + " · " + (d.reenviar ? "reenvía el correo original" : "correo nuevo")),
+      d.motivo ? el("p", {class: "pide normal"}, d.motivo) : null,
+      el("p", {class: "pide"}, "La IA lo dirige a: " + d.quien + (d.para.length ? "" : ". No he encontrado su dirección: ponla en «Para».")),
+      camposDestino(d, "d" + i + "-", d.reenviar ? m : null),
+      d.reenviar ? null : el("label", {}, "Asunto", asunto),
+      fuera.length ? el("span", {class: "aviso"}, "Fuera de la empresa: " + fuera.join(", ") + ". Comprueba que es quien debe recibirlo" + (d.reenviar ? " y que puede ver el correo original." : ".")) : null,
+      area,
+      el("button", {class: "enlace izquierda", type: "button", onclick: () => { d.reenviar = !d.reenviar; if (!d.reenviar && !d.asunto) d.asunto = String(m.subject || "").replace(/^((re|rv|fw|fwd)\s*:\s*)+/i, ""); pintarDetalle(); }}, d.reenviar ? "Mandarlo como correo nuevo, sin el original" : "Reenviar con él el correo original y sus adjuntos"),
+      el("div", {class: "fila"},
+        el("button", {class: "plano", type: "button", onclick: () => { d.descartado = true; const p = estado.propuestas[m.id]; if (p && p.fase === "enviada" && !derivadosPendientes(p).length) delete estado.propuestas[m.id]; pintarDetalle(); }}, "Descartar"),
+        el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviarDerivado(m, d), [], "Correo derivado enviado")}, "Enviar este correo")));
+  }).filter(Boolean);
+}
+function conDerivados(principal, m, x) {
+  const f = document.createDocumentFragment();
+  f.append(principal, ...cartasDerivados(m, x));
+  return f;
 }
 const FORMATO_TEST = 'una por cada decisión real que plantea el correo (elegir entre opciones, aceptar o no, plazos, importes, quién se encarga), ni una más: 1 o 2 si es sencillo, hasta 14 si es complejo. No preguntes por el tono ni lo que ya se deduce del correo. Cada pregunta con entre 2 y 4 opciones cortas (máximo 9 palabras), distintas y realistas para este caso; no añadas una opción «Otra». En castellano. Forma exacta: {"preguntas":[{"pregunta":"…","opciones":["…","…"]}]}';
 function leerPreguntas(texto) {
@@ -1487,13 +1575,13 @@ async function pedirPropuesta(m, guia) {
   const x = estado.propuestas[m.id] = Object.assign(estado.propuestas[m.id] || {}, {fase: "cargando", error: null});
   repintarSi(m.id);
   try {
-    const sistema = `Preparas la respuesta a un correo en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él la revise y la envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\n${AVISO_DESTINO}\nNo inventes datos, importes, fechas ni compromisos, y no decidas por él. ${guia ? "Si aun con sus respuestas falta un dato concreto, escribe [FALTA: qué dato] en su sitio." : "Antes de redactar, comprueba si para contestar hace falta una decisión o un dato que solo Francesc puede dar (elegir entre opciones, aceptar o no, un precio, una fecha, quién se encarga). Si falta algo así, NO redactes nada: responde únicamente con un JSON de preguntas tipo test para que Francesc decida, " + FORMATO_TEST + " Solo si tienes todo lo necesario, redacta la respuesta (un acuse breve vale cuando no hay nada que decidir)."}\nFormato de salida: la primera línea es exactamente «PARA: remitente» o «PARA: todos» (todos solo si los demás destinatarios necesitan leer la respuesta). A continuación, solo el texto del correo, sin asunto ni explicaciones.`;
+    const sistema = `Preparas la respuesta a un correo en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él la revise y la envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\n${AVISO_DESTINO}\nNo inventes datos, importes, fechas ni compromisos, y no decidas por él. ${guia ? "Si aun con sus respuestas falta un dato concreto, escribe [FALTA: qué dato] en su sitio." : "Antes de redactar, comprueba si para contestar hace falta una decisión o un dato que solo Francesc puede dar (elegir entre opciones, aceptar o no, un precio, una fecha, quién se encarga). Si falta algo así, NO redactes nada: responde únicamente con un JSON de preguntas tipo test para que Francesc decida, " + FORMATO_TEST + " Solo si tienes todo lo necesario, redacta la respuesta (un acuse breve vale cuando no hay nada que decidir)."}\n${AVISO_DERIVADOS}\nFormato de salida: la primera línea es exactamente «PARA: remitente» o «PARA: todos» (todos solo si los demás destinatarios necesitan leer la respuesta). A continuación, solo el texto del correo, sin asunto ni explicaciones; y detrás, si los hay, los derivados.`;
     // Si el agente ya leyó el correo y sus adjuntos, se le pasa su resumen en vez de volver a mandar los PDF:
     // es bastante más rápido y gasta menos.
     const previo = lineasResumen(prop(m).resumen).join("\n");
     const usuario = (guia ? `Francesc ha contestado este test para definir la respuesta; respétalo punto por punto:\n${guia}\n\n` : "") + correoParaIA(m)
       + (previo ? `\n\nResumen ya hecho de este correo y de sus adjuntos:\n${previo}` : "");
-    const res = previo ? await ia(sistema, usuario, 3000) : await iaConAdjuntos(m, sistema, usuario, 3000);
+    const res = previo ? await ia(sistema, usuario, 5000) : await iaConAdjuntos(m, sistema, usuario, 5000);
     // Si a la IA le falta una decisión de Francesc, no se enseña un correo con huecos: llegan ya las preguntas.
     const preguntas = guia ? [] : leerPreguntas(res.texto);
     if (preguntas.length) {
@@ -1505,6 +1593,7 @@ async function pedirPropuesta(m, guia) {
     if (!guia && /\[FALTA/i.test(nueva.texto || "")) { x.texto = ""; return pedirTest(m, "", x.destino || null); }
     if (x.destino) delete nueva.todos;
     Object.assign(x, nueva, {fase: "lista", modelo: res.modelo});
+    if (x.derivados.length) resolverDerivados(m, x);
   } catch (e) { x.fase = "error"; x.error = e.message; }
   repintarSi(m.id);
 }
@@ -1536,6 +1625,8 @@ function bloquePropuesta(m, esRespuesta) {
   // La IA solo trabaja cuando se le pide: abrir un correo no gasta nada.
   if (!x) return el("div", {class: "pedir-ia"}, el("button", {class: "plano", type: "button", onclick: () => pedirPropuesta(m)}, "Proponer respuesta con IA"));
   if (x.fase === "cargando") return el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "La IA está preparando la respuesta…"));
+  // La respuesta ya salió y quedan correos derivados por enviar o descartar.
+  if (x.fase === "enviada") return conDerivados(el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Respuesta enviada"), el("p", {class: "pide"}, "Quedan estos correos derivados. Envíalos o descártalos y, cuando acabes, archiva el correo con el botón de arriba.")), m, x);
   if (x.fase === "error") return el("div", {class: "carta propuesta"}, el("span", {class: "eti"}, "Propuesta de respuesta"), el("p", {class: "pide"}, "No se ha podido preparar: " + x.error), el("button", {class: "plano izquierda", type: "button", onclick: () => pedirPropuesta(m)}, "Reintentar"));
   if (x.fase === "test") {
     if (!x.libres) x.libres = {};
@@ -1573,8 +1664,10 @@ function bloquePropuesta(m, esRespuesta) {
   const r = () => ({mid: m.id, modo: x.destino.modo, texto: x.texto, idea: "", para: x.destino.para.slice(), cc: x.destino.cc.slice(), cco: (x.destino.cco || []).slice()});
   const cambiar = () => { const modo = x.destino.modo === "todos" ? "responder" : "todos"; x.destino = Object.assign({modo}, destinatariosIniciales(m, modo)); pintarDetalle(); };
   const falta = /\[FALTA/i.test(x.texto);
-  return el("div", {class: "carta propuesta"},
+  const quedan = derivadosPendientes(x).length;
+  return conDerivados(el("div", {class: "carta propuesta"},
     el("span", {class: "eti"}, "Propuesta de respuesta (" + x.modelo + ")"),
+    quedan ? el("span", {class: "aviso"}, "De esta respuesta " + (quedan === 1 ? "sale 1 correo más" : "salen " + quedan + " correos más") + " a otras personas: " + (quedan === 1 ? "está" : "están") + " debajo, para que decidas si " + (quedan === 1 ? "lo envías." : "los envías.")) : null,
     camposDestino(x.destino, "p", m),
     el("button", {class: "enlace izquierda", type: "button", onclick: cambiar}, x.destino.modo === "todos" ? "Responder solo al remitente" : "Responder a todos (incluye a los que estaban en copia)"),
     el("p", {class: "cuerpo"}, x.texto),
@@ -1582,8 +1675,10 @@ function bloquePropuesta(m, esRespuesta) {
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => pedirTest(m, null, x.destino)}, "No me convence"),
       el("button", {class: "plano", type: "button", onclick: () => { estado.redacta = r(); pintarDetalle(); const a = $("manual"); if (a) a.focus(); }}, "Editar"),
-      el("button", {class: "lleno", type: "button", disabled: falta ? "" : null, onclick: () => hacer(() => enviarManual(m, r(), true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar")),
-    vistaFirma());
+      quedan
+        ? el("button", {class: "lleno", type: "button", disabled: falta ? "" : null, onclick: () => hacer(() => enviarManual(m, r(), false), [], "Respuesta enviada. Quedan los correos derivados")}, "Enviar la respuesta")
+        : el("button", {class: "lleno", type: "button", disabled: falta ? "" : null, onclick: () => hacer(() => enviarManual(m, r(), true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar")),
+    vistaFirma()), m, x);
 }
 function activarIA() {
   if (!estado.pideClave) return el("button", {class: "enlace izquierda", type: "button", onclick: () => { estado.pideClave = true; pintarDetalle(); const c = $("clave"); if (c) c.focus(); }}, "Activar la IA en este dispositivo");
@@ -1778,7 +1873,10 @@ async function enviarManual(m, r, archivarDespues) {
     toRecipients: aLista(r.para), ccRecipients: aLista(r.cc), bccRecipients: aLista(r.cco || [])});
   await api("POST", `/me/messages/${id(nuevo.id)}/send`);
   if (estado.redacta && estado.redacta.mid === m.id) estado.redacta = null;
+  const quedan = derivadosPendientes(estado.propuestas[m.id]);
   delete estado.propuestas[m.id];
+  // Los correos derivados que aún no has enviado ni descartado siguen a la vista tras mandar la respuesta.
+  if (quedan.length && !archivarDespues && r.modo !== "reenviar") estado.propuestas[m.id] = {fase: "enviada", derivados: quedan};
   // Queda marcado como respondido o reenviado, aquí y en Outlook (categoría).
   const hecho = CAT_HECHO[r.modo];
   if (!(m.categories || []).includes(hecho)) {
@@ -1825,7 +1923,8 @@ function panelManual(m) {
     /\[FALTA/i.test(r.texto) ? el("span", {class: "aviso"}, "Completa los huecos [FALTA: …] para poder enviar") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => hacer(() => enviarManual(m, r, false), [], "Enviado")}, "Enviar"),
-      el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviarManual(m, r, true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar en " + carpetaDe(m).nombre)),
+      derivadosPendientes(estado.propuestas[m.id]).length && r.modo !== "reenviar" ? null : el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviarManual(m, r, true), [m.id], "Enviado y archivado en " + carpetaDe(m).nombre)}, "Enviar y archivar en " + carpetaDe(m).nombre)),
+    derivadosPendientes(estado.propuestas[m.id]).length && r.modo !== "reenviar" ? el("span", {class: "pide"}, "Al enviar verás los correos derivados que preparó la IA; archiva cuando los hayas enviado o descartado.") : null,
     vistaFirma());
 }
 // Como append, pero sin los huecos: append(null) escribiría la palabra «null».
