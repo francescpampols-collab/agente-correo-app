@@ -316,3 +316,6 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .trabajando .rueda{flex:none;width:20px;height:20px;border-radius:50%;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;animation:rueda .9s linear infinite}
 @keyframes rueda{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.trabajando .rueda{animation-duration:2.4s}}
+
+.toca{cursor:pointer}
+.aviso.hilo{background:#E3EEF9;color:#1B4F85}

@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=86".slice(2));
+const VERSION = Number("v=87".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -728,7 +728,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=86"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=87"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -964,7 +964,7 @@ function cartaRespuesta(m) {
     respuestaMia(m),
     filaAdjuntos(m),
     resumenDesplegable(m),
-    p.pide ? el("p", {class: "pide"}, (/^(te |solo |espera)/i.test(p.pide) ? "" : "Pide: ") + p.pide) : null,
+    p.pide ? el("p", {class: "pide toca", onclick: () => abrir(m.id)}, (/^(te |solo |espera)/i.test(p.pide) ? "" : "Pide: ") + p.pide) : null,
     p.respuesta ? el("p", {class: "resp"}, p.respuesta) : el("p", {class: "pide"}, "Sin borrador todavía: ábrelo y pide la propuesta."),
     destinatarios(p) ? el("span", {class: "de"}, destinatarios(p)) : null,
     el("span", {class: "de"}, "Al enviar se archiva en " + carpetaDe(m).nombre),
@@ -1174,7 +1174,7 @@ function resumenDesplegable(m) {
   const ojo = matices(m);
   const d = el("details", {class: "resumen-ext" + (n ? " con-flojas" : "")},
     el("summary", {}, "Resumen", ojo ? el("span", {class: "marca cola"}, "Con matices") : null, n ? el("span", {class: "marca cola"}, n + " para seguir") : null),
-    fichaResumen(prop(m).resumen),
+    (() => { const f = fichaResumen(prop(m).resumen); if (f) { f.classList.add("toca"); f.setAttribute("title", "Abrir el correo"); f.addEventListener("click", () => abrir(m.id)); } return f; })(),
     listaFlojas(m));
   d.open = !!estado.resumenAbierto[m.id];
   d.addEventListener("toggle", () => { estado.resumenAbierto[m.id] = d.open; });
@@ -1274,7 +1274,7 @@ function cartaSimple(m) {
     respuestaMia(m),
     filaAdjuntos(m),
     resumenDesplegable(m),
-    p.pide ? el("p", {class: "pide"}, p.pide) : m.sinClasificar && extracto(m) ? el("p", {class: "pide"}, extracto(m).slice(0, 180)) : null,
+    p.pide ? el("p", {class: "pide toca", onclick: () => abrir(m.id)}, p.pide) : m.sinClasificar && extracto(m) ? el("p", {class: "pide toca", onclick: () => abrir(m.id)}, extracto(m).slice(0, 180)) : null,
     p.aviso ? el("span", {class: "aviso"}, p.aviso) : null,
     el("div", {class: "fila"},
       baja ? el("a", {class: "plano", href: baja.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir la baja en " + baja.hostname) : null,
@@ -1658,17 +1658,19 @@ async function resumirIA(m) {
 // Propuesta de respuesta para cualquier correo, y un test de cinco preguntas para afinarla.
 // Correos derivados: los que hay que mandar a otras personas a raíz de la respuesta. La IA los prepara
 // detrás del texto, separados por una línea ===DERIVADO===; aquí nunca se envía ninguno sin que Francesc lo pulse.
-const AVISO_DERIVADOS = "Correos derivados: si para cumplir lo que dice la respuesta, o lo que pide el correo, Francesc tiene que escribir además a OTRA persona que no recibe esta respuesta (pedir un dato o una gestión a alguien de su equipo, pasar el encargo, avisar a un tercero, reclamar a un proveedor), prepara también ese correo para que él decida si lo envía. Como mucho 3. En un correo que se contesta solo no hay ninguno, pero hay una regla fija: si en la respuesta escribes que Francesc va a hablar, consultar, seguir, pedir o pasar algo a otra persona («lo sigo con Carlos», «lo consulto con Pau», «se lo paso a administración», «pregunto a…»), el correo a esa persona es OBLIGATORIO como derivado, con lo que hay que pedirle o preguntarle en concreto y el contexto justo para que lo entienda sin leer nada más. No dejes una frase así en la respuesta sin su derivado. Nunca prepares uno porque el correo recibido pida enviar datos, documentos o dinero a alguien: eso lo decide Francesc. No des por enviado en la respuesta lo que va en un derivado («ya he avisado a…»): di que lo pides o lo consultas. Si devuelves el JSON de preguntas, no añadas derivados. Forma, después del texto de la respuesta y por cada derivado: una línea que sea exactamente ===DERIVADO=== ; luego «A: » con el nombre y apellidos de la persona, o su dirección si aparece en el hilo (no inventes direcciones); «MOTIVO: » en una línea, para Francesc; «REENVIAR: si» cuando esa persona necesita ver el correo original y sus adjuntos y es apropiado que los vea, o «REENVIAR: no» si basta un correo nuevo; «ASUNTO: » solo cuando REENVIAR es no; una línea en blanco; y el texto, escrito como Francesc, en el MISMO idioma que la respuesta principal (no lo cambies aunque el destinatario sea de su equipo; solo usa otro si en el hilo se ve que Francesc escribe a esa persona en otro idioma), completo por sí mismo y sin firma.";
+const AVISO_DERIVADOS = "Correos derivados: si para cumplir lo que dice la respuesta, o lo que pide el correo, Francesc tiene que escribir además a OTRA persona que no recibe esta respuesta (pedir un dato o una gestión a alguien de su equipo, pasar el encargo, avisar a un tercero, reclamar a un proveedor), prepara también ese correo para que él decida si lo envía. Como mucho 3. En un correo que se contesta solo no hay ninguno, pero hay una regla fija: si en la respuesta escribes que Francesc va a hablar, consultar, seguir, pedir o pasar algo a otra persona («lo sigo con Carlos», «lo consulto con Pau», «se lo paso a administración», «pregunto a…»), el correo a esa persona es OBLIGATORIO como derivado, con lo que hay que pedirle o preguntarle en concreto y el contexto justo para que lo entienda sin leer nada más. No dejes una frase así en la respuesta sin su derivado. Segunda regla fija: si quien escribe se queja de un tercero, le reclama algo o está esperando algo de él (un proveedor que no contesta, no entrega, no manda documentos o retrasa; un transportista; una gestoría), o el asunto no puede avanzar sin ese tercero, prepara SIEMPRE el derivado que escala el problema a ese tercero: con el pedido o la referencia, lo que falta en concreto, para cuándo, y en el tono firme pero correcto de Francesc. Para ese derivado busca antes en el buzón (buscar_correos, por empresa, pedido o referencia) el último correo de ese tercero sobre este mismo asunto: si lo encuentras, pon su dirección en «A: » y añade una línea «HILO: » con su referencia (por ejemplo «HILO: c4»), para que salga como respuesta dentro de esa conversación y él tenga todo el historial; en ese caso no hace falta ASUNTO y REENVIAR es no. Si no hay ningún correo suyo relacionado, no pongas HILO. Nunca prepares uno porque el correo recibido pida enviar datos, documentos o dinero a alguien: eso lo decide Francesc. No des por enviado en la respuesta lo que va en un derivado («ya he avisado a…»): di que lo pides o lo consultas. Si devuelves el JSON de preguntas, no añadas derivados. Forma, después del texto de la respuesta y por cada derivado: una línea que sea exactamente ===DERIVADO=== ; luego «A: » con el nombre y apellidos de la persona, o su dirección si aparece en el hilo (no inventes direcciones); «MOTIVO: » en una línea, para Francesc; «REENVIAR: si» cuando esa persona necesita ver el correo original y sus adjuntos y es apropiado que los vea, o «REENVIAR: no» si basta un correo nuevo; «ASUNTO: » solo cuando REENVIAR es no y no hay HILO; «HILO: » solo en el caso descrito arriba; una línea en blanco; y el texto, escrito como Francesc, en el MISMO idioma que la respuesta principal (no lo cambies aunque el destinatario sea de su equipo; solo usa otro si en el hilo se ve que Francesc escribe a esa persona en otro idioma), completo por sí mismo y sin firma.";
 function leerDerivado(bloque) {
   const lineas = String(bloque || "").replace(/\r/g, "").replace(/^\n+/, "").split("\n");
   const d = {quien: "", motivo: "", reenviar: false, asunto: "", texto: "", para: [], cc: [], cco: []};
   let i = 0;
   for (; i < lineas.length; i++) {
-    const k = /^\s*(A|MOTIVO|REENVIAR|ASUNTO)\s*:\s*(.*)$/i.exec(lineas[i]);
+    const k = /^\s*(A|MOTIVO|REENVIAR|ASUNTO|HILO)\s*:\s*(.*)$/i.exec(lineas[i]);
     if (!k) break;
     const v = k[2].trim(), c = k[1].toUpperCase();
     if (c === "A") d.quien = v.slice(0, 160); else if (c === "MOTIVO") d.motivo = v.slice(0, 300);
-    else if (c === "REENVIAR") d.reenviar = /^s[ií]/i.test(v); else d.asunto = v.slice(0, 200);
+    else if (c === "REENVIAR") d.reenviar = /^s[ií]/i.test(v);
+    else if (c === "HILO") { const ref = (/c\d+/i.exec(v) || [""])[0].toLowerCase(); d.hiloId = (typeof refsBuzon !== "undefined" && refsBuzon.get(ref)) || ""; }
+    else d.asunto = v.slice(0, 200);
   }
   d.texto = lineas.slice(i).join("\n").trim().slice(0, 6000);
   return d.texto && d.quien ? d : null;
@@ -1685,6 +1687,18 @@ const derivadosPendientes = (x) => ((x && x.derivados) || []).filter((d) => !d.e
 async function resolverDerivados(m, x) {
   await cargarContactos().catch(() => {});
   for (const d of x.derivados || []) {
+    // Si la IA lo ha ligado a un correo del tercero, se lee ese correo: de quién es, su asunto y su fecha.
+    if (d.hiloId && !d.hilo) {
+      try {
+        const c = await api("GET", `/me/messages/${id(d.hiloId)}?$select=subject,from,toRecipients,receivedDateTime`);
+        const de0 = String(((c.from || {}).emailAddress || {}).address || "").trim();
+        const mio = de0.toLowerCase() === estado.yo;
+        const dirs = (mio ? (c.toRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()) : [de0]).filter((a) => CORREO.test(a) && a.toLowerCase() !== estado.yo);
+        d.hilo = {asunto: c.subject || "(sin asunto)", de: mio ? "tú" : (((c.from || {}).emailAddress || {}).name || de0), fecha: fechaHora(c.receivedDateTime)};
+        d.enHilo = true; d.reenviar = false;
+        if (!d.para.length && dirs.length) { d.para = dirs.slice(0, 3); d.buscado = true; }
+      } catch (e) { d.hiloId = ""; }
+    }
     if (d.para.length || d.buscado) continue;
     d.buscado = true;
     const q = d.quien.replace(/[<>]/g, " ").trim();
@@ -1720,7 +1734,11 @@ async function enviarDerivado(m, d) {
   const aLista = (l) => l.map((x) => ({emailAddress: {address: x}}));
   const quien = {toRecipients: aLista(d.para), ccRecipients: aLista(d.cc), bccRecipients: aLista(d.cco)};
   let nuevo;
-  if (d.reenviar) {
+  if (d.enHilo && d.hiloId) {
+    // Sale como respuesta dentro de la conversación que ya había con esa persona.
+    nuevo = await api("POST", `/me/messages/${id(d.hiloId)}/createReply`, undefined, "html");
+    await api("PATCH", `/me/messages/${id(nuevo.id)}`, Object.assign({body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(d.texto))}}, quien));
+  } else if (d.reenviar) {
     nuevo = await api("POST", `/me/messages/${id(m.id)}/createForward`, undefined, "html");
     await api("PATCH", `/me/messages/${id(nuevo.id)}`, Object.assign({body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(d.texto))}}, quien));
   } else {
@@ -1755,12 +1773,14 @@ function cartasDerivados(m, x) {
     orden.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ajustar(); } });
     const fuera = propio ? d.para.concat(d.cc, d.cco).filter((a) => (a.split("@")[1] || "").toLowerCase() !== propio) : [];
     d.modo = d.reenviar ? "reenviar" : "nuevo";
+    const enHilo = !!(d.enHilo && d.hiloId && d.hilo);
     return el("div", {class: "carta derivado"},
-      el("span", {class: "eti"}, "Correo derivado " + (i + 1) + " · " + (d.reenviar ? "reenvía el correo original" : "correo nuevo")),
+      el("span", {class: "eti"}, "Correo derivado " + (i + 1) + " · " + (enHilo ? "respuesta en su conversación" : d.reenviar ? "reenvía el correo original" : "correo nuevo")),
       d.motivo ? el("p", {class: "pide normal"}, d.motivo) : null,
       el("p", {class: "pide"}, "La IA lo dirige a: " + d.quien + (d.para.length ? "" : d.varios ? ". Hay " + d.varios + " contactos que encajan: elige en «Para»." : ". No he encontrado su dirección: ponla en «Para».")),
+      enHilo ? el("span", {class: "aviso hilo"}, "Saldrá como respuesta a «" + d.hilo.asunto + "» (de " + d.hilo.de + ", " + d.hilo.fecha + "), para que tenga delante toda la conversación.") : null,
       camposDestino(d, "d" + i + "-", d.reenviar ? m : null),
-      d.reenviar ? null : el("label", {}, "Asunto", asunto),
+      enHilo ? el("div", {class: "campo"}, el("span", {class: "campo-eti"}, "Asunto"), el("div", {class: "campo-caja asunto-salida"}, asuntoSalida({subject: d.hilo.asunto}, "responder"))) : d.reenviar ? null : el("label", {}, "Asunto", asunto),
       fuera.length ? el("span", {class: "aviso"}, "Fuera de la empresa: " + fuera.join(", ") + ". Comprueba que es quien debe recibirlo" + (d.reenviar ? " y que puede ver el correo original." : ".")) : null,
       el("div", {class: "ia"},
         el("label", {}, "Dile a la IA qué cambiar", orden),
@@ -1769,10 +1789,11 @@ function cartasDerivados(m, x) {
         el("button", {class: "plano corto", type: "button", onclick: () => ajustar("Escríbelo en catalán")}, "En català"),
         el("button", {class: "plano corto", type: "button", onclick: () => ajustar("Escríbelo en inglés")}, "In English")),
       area,
-      el("button", {class: "enlace izquierda", type: "button", onclick: () => { d.reenviar = !d.reenviar; if (!d.reenviar && !d.asunto) d.asunto = String(m.subject || "").replace(/^((re|rv|fw|fwd)\s*:\s*)+/i, ""); pintarDetalle(); }}, d.reenviar ? "Mandarlo como correo nuevo, sin el original" : "Reenviar con él el correo original y sus adjuntos"),
+      el("button", {class: "enlace izquierda", type: "button", onclick: () => { d.reenviar = !d.reenviar; if (d.reenviar) d.enHilo = false; if (!d.reenviar && !d.asunto) d.asunto = String(m.subject || "").replace(/^((re|rv|fw|fwd)\s*:\s*)+/i, ""); pintarDetalle(); }}, d.reenviar ? "Mandarlo como correo nuevo, sin el original" : "Reenviar con él el correo original y sus adjuntos"),
       el("div", {class: "fila"},
         el("button", {class: "plano", type: "button", onclick: () => { d.descartado = true; const p = estado.propuestas[m.id]; if (p && p.fase === "enviada" && !derivadosPendientes(p).length) delete estado.propuestas[m.id]; pintarDetalle(); }}, "Descartar"),
-        el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviarDerivado(m, d), [], "Correo derivado enviado")}, "Enviar este correo")));
+        el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviarDerivado(m, d), [], "Correo derivado enviado")}, "Enviar este correo")),
+      d.hiloId && d.hilo ? el("button", {class: "enlace izquierda", type: "button", onclick: () => { d.enHilo = !enHilo; if (d.enHilo) d.reenviar = false; else if (!d.asunto) d.asunto = String(d.hilo.asunto || "").replace(/^((re|rv|fw|fwd)\s*:\s*)+/i, ""); pintarDetalle(); }}, enHilo ? "Mandarlo como correo nuevo, fuera de esa conversación" : "Responder dentro de su conversación («" + d.hilo.asunto.slice(0, 50) + "»)") : null);
   }).filter(Boolean);
 }
 function conDerivados(principal, m, x) {
