@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=85".slice(2));
+const VERSION = Number("v=86".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -110,7 +110,24 @@ function el(tag, attrs, ...hijos) {
   return n;
 }
 let temporizador;
+// Mientras hay una tarea en curso se ve una franja fija con lo que se está haciendo y los segundos que lleva.
+// Los avisos de progreso («La IA busca en tu correo…») cambian su texto en vez de aparecer y desaparecer.
+let trabajando = null;
+function empezarTrabajo(texto) {
+  terminarTrabajo();
+  const t0 = Date.now(), frase = el("span", {class: "frase"}, texto || "Trabajando…"), cuenta = el("span", {class: "segundos"}, "");
+  const barra = el("div", {id: "trabajando", class: "trabajando", role: "status", "aria-live": "polite"}, el("span", {class: "rueda", "aria-hidden": "true"}), frase, cuenta);
+  document.body.append(barra);
+  trabajando = {barra, frase, reloj: setInterval(() => { const s = Math.round((Date.now() - t0) / 1000); cuenta.textContent = s >= 3 ? s + " s" : ""; }, 1000)};
+}
+function terminarTrabajo() {
+  if (!trabajando) return;
+  clearInterval(trabajando.reloj);
+  trabajando.barra.remove();
+  trabajando = null;
+}
 function avisar(texto) {
+  if (trabajando && /…\s*$/.test(texto) || trabajando && /^La IA (busca|lee)/.test(texto)) { trabajando.frase.textContent = texto; return; }
   $("aviso").textContent = texto;
   $("aviso").classList.remove("oculto");
   clearTimeout(temporizador);
@@ -462,10 +479,15 @@ async function hacer(tarea, ids, hecho, recargar) {
   if (ids && ids.length) return hacerDeFondo(tarea, ids, hecho, recargar);
   const botones = document.querySelectorAll("button");
   botones.forEach((b) => (b.disabled = true));
+  // Lo último que se avisó («La IA está leyendo el correo…») pasa a la franja fija y se queda hasta que acabe.
+  const previo = $("aviso").classList.contains("oculto") ? "" : $("aviso").textContent;
+  $("aviso").classList.add("oculto");
+  empezarTrabajo(/…\s*$/.test(previo) ? previo : "Trabajando…");
   try {
     await tarea();
+    terminarTrabajo();
     if (hecho) avisar(hecho);
-  } catch (e) { avisar("No se ha podido completar: " + e.message); }
+  } catch (e) { terminarTrabajo(); avisar("No se ha podido completar: " + e.message); }
   botones.forEach((b) => (b.disabled = false));
   pintar();
   if (recargar) await cargar();
@@ -706,7 +728,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=85"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=86"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -1416,7 +1438,15 @@ async function usarHerramienta(nombre, entrada) {
   } catch (e) { return "No se ha podido consultar el buzón: " + e.message; }
 }
 // conBuzon: la IA puede buscar y leer correos antes de contestar (hasta 8 idas y vueltas).
+// Toda petición a la IA que haya pedido Francesc enseña la franja de «trabajando» hasta que contesta.
+// La clasificación automática de lo recién llegado (modelos rápidos) va en silencio.
 async function ia(sistema, usuario, maximo, modelos, conBuzon) {
+  const propia = !trabajando && modelos !== IA_RAPIDOS;
+  if (propia) empezarTrabajo("La IA está trabajando…");
+  try { return await iaLlamada(sistema, usuario, maximo, modelos, conBuzon); }
+  finally { if (propia) terminarTrabajo(); }
+}
+async function iaLlamada(sistema, usuario, maximo, modelos, conBuzon) {
   const clave = leer("agente.ia");
   if (!clave) throw new Error("activa antes la IA en este dispositivo");
   let fallo = "sin respuesta";
