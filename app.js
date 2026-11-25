@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=82".slice(2));
+const VERSION = Number("v=83".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -607,7 +607,8 @@ function ofrecerEnlace(direccion) {
   const abrir = el("button", {class: "lleno corto", type: "button", onclick: () => {
     cerrar();
     // En la aplicación Android, navegar a una dirección de fuera hace que el móvil la abra en el navegador.
-    if (window.agenteApk && u.protocol !== "http:") location.href = u.href;
+    // La primera versión del APK solo entrega al navegador enlaces https: los http se piden por https.
+    if (window.agenteApk) location.href = u.protocol === "http:" && !(Number(window.agenteApk.version) >= 2) ? u.href.replace(/^http:/i, "https:") : u.href;
     else window.open(u.href, "_blank", "noopener,noreferrer");
   }}, u.protocol === "mailto:" ? "Escribirle" : "Abrir");
   const barra = el("div", {id: "enlace", class: "enlace-barra", role: "dialog", "aria-label": "Abrir enlace"},
@@ -635,7 +636,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=82"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=83"});
   marco.html = html;
   marcos.push(marco);
   return marco;
