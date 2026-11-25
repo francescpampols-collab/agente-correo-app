@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=84".slice(2));
+const VERSION = Number("v=85".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -95,7 +95,7 @@ function podarTrabajo() {
 document.addEventListener("input", guardarTrabajo);
 document.addEventListener("scroll", guardarTrabajo, true);
 // Al pasar a segundo plano se guarda al instante: el móvil puede descartar la página sin avisar.
-document.addEventListener("visibilitychange", () => { if (document.hidden) guardarYa(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) { guardarYa(); if (typeof confirmarEspera === "function") confirmarEspera(); } });
 window.addEventListener("pagehide", guardarYa);
 // Si aún hay envíos o archivados a medio guardar, el navegador avisa antes de cerrar o recargar.
 window.addEventListener("beforeunload", (e) => { if (enProceso.size) { e.preventDefault(); e.returnValue = ""; } });
@@ -289,7 +289,7 @@ function selectorCarpeta(m) {
     el("span", {class: "eti"}, "Archivar en"),
     el("div", {class: "opciones"}, ...nombres.map((n) => el("button", {class: "opcion" + (n === actual ? " activa" : ""), type: "button", onclick: () => {
       destinos[m.id] = n; eligiendo = null;
-      hacer(() => archivar(m), [m.id], "Archivado en " + n);
+      archivarDeshacible([m], "Archivado en " + n);
     }}, n))));
 }
 function carpetaDe(m) {
@@ -470,6 +470,64 @@ async function hacer(tarea, ids, hecho, recargar) {
   pintar();
   if (recargar) await cargar();
 }
+// ---------- archivar con «Deshacer» ----------
+// Al archivar, el correo sale de la lista al momento pero a Outlook no se le dice nada hasta pasados 6 segundos:
+// mientras tanto hay un botón para deshacerlo. Si se archiva otra cosa, se cierra la app o se cambia de aplicación,
+// lo que estaba esperando se archiva ya (no se queda a medias).
+const PAUSA_DESHACER = 6000;
+let espera = null;
+function quitarBarraDeshacer() { const b = $("deshacer"); if (b) b.remove(); }
+function confirmarEspera() {
+  const e = espera;
+  if (!e) return;
+  espera = null;
+  clearTimeout(e.reloj);
+  quitarBarraDeshacer();
+  colaAcciones = colaAcciones.then(async () => {
+    try {
+      for (const m of e.lista) await archivar(m);
+      e.ids.forEach((x) => enProceso.delete(x));
+      if (!estado.sel) pintar(); else if (!enProceso.size) $("resumen").textContent = "Cambios guardados en Outlook";
+    } catch (err) {
+      e.ids.forEach((x) => enProceso.delete(x));
+      for (const [k, pos, m] of e.sitio) if (!estado.datos[k].some((y) => y.id === m.id)) estado.datos[k].splice(Math.min(pos, estado.datos[k].length), 0, m);
+      avisar("No se ha podido archivar: " + err.message);
+      pintar();
+    }
+  });
+  return colaAcciones;
+}
+function deshacerArchivo() {
+  const e = espera;
+  if (!e) return;
+  espera = null;
+  clearTimeout(e.reloj);
+  quitarBarraDeshacer();
+  e.ids.forEach((x) => { enProceso.delete(x); apuntarSalida(x, false); });
+  for (const [k, pos, m] of e.sitio) if (!estado.datos[k].some((y) => y.id === m.id)) estado.datos[k].splice(Math.min(pos, estado.datos[k].length), 0, m);
+  if (estado.cargado) guardarBandeja();
+  avisar(e.lista.length === 1 ? "Deshecho: el correo sigue en la bandeja" : "Deshecho: siguen en la bandeja");
+  if (e.abierto && !estado.sel) abrir(e.abierto); else pintar();
+}
+function archivarDeshacible(lista, hecho) {
+  lista = lista.filter((m) => m && !m.archivado);
+  if (!lista.length) return;
+  confirmarEspera();
+  const ids = lista.map((m) => m.id), sitio = [];
+  for (const k of Object.keys(estado.datos)) estado.datos[k].forEach((m, pos) => { if (ids.includes(m.id)) sitio.push([k, pos, m]); });
+  const abierto = ids.includes(estado.sel) ? estado.sel : null;
+  // Queda apuntado como pendiente: si la app se cierra antes de tiempo, se archiva al volver a abrirla.
+  ids.forEach((x) => { enProceso.add(x); apuntarSalida(x, true); });
+  quitar(ids);
+  pintar();
+  $("aviso").classList.add("oculto");
+  quitarBarraDeshacer();
+  document.body.append(el("div", {id: "deshacer", class: "enlace-barra deshacer", role: "status"},
+    el("div", {class: "enlace-texto"}, hecho || "Archivado"),
+    el("button", {class: "lleno corto", type: "button", onclick: deshacerArchivo}, "Deshacer"),
+    el("span", {class: "cuenta"})));
+  espera = {lista, ids, sitio, abierto, reloj: setTimeout(confirmarEspera, PAUSA_DESHACER)};
+}
 function hacerDeFondo(tarea, ids, hecho, recargar) {
   const sitio = [];
   for (const k of Object.keys(estado.datos)) estado.datos[k].forEach((m, pos) => { if (ids.includes(m.id)) sitio.push([k, pos, m]); });
@@ -648,7 +706,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=84"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=85"});
   marco.html = html;
   marcos.push(marco);
   return marco;
@@ -900,7 +958,7 @@ function cartaRespuesta(m) {
           botonReaccion(m))
       : el("div", {class: "fila"},
           el("button", {class: "plano", type: "button", onclick: () => abrir(m.id)}, "Abrir y responder"),
-          el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
+          el("button", {class: "plano archivo", type: "button", onclick: () => archivarDeshacible([m], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
           botonCarpeta(m),
           botonLeido(m),
           botonFuera(m),
@@ -918,7 +976,7 @@ function cartaGrupo(g) {
     ...g.items.slice(0, 5).map((m) => el("button", {class: "pide enlace", type: "button", onclick: () => abrir(m.id)}, m.subject || "(sin asunto)")),
     g.items.length > 5 ? el("span", {class: "pide"}, "y " + (g.items.length - 5) + " más") : null,
     el("div", {class: "fila"},
-      el("button", {class: "plano archivo", type: "button", onclick: () => hacer(async () => { for (const m of g.items) await archivar(m); }, ids, "Archivado en " + carpetaDe(g.items[0]).nombre)}, "Archivar en " + carpetaDe(g.items[0]).nombre),
+      el("button", {class: "plano archivo", type: "button", onclick: () => archivarDeshacible(g.items, "Archivado en " + carpetaDe(g.items[0]).nombre)}, "Archivar en " + carpetaDe(g.items[0]).nombre),
       g.dir ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => archivarSiempre(g), ids, "Archivado. Lo nuevo de este remitente se archivará solo en cada pasada")}, "Archivar siempre") : null,
       el("button", {class: "plano peligro", type: "button", onclick: () => hacer(() => pedirBaja(g), ids, posible ? "La baja se tramita en la próxima pasada" : "Este boletín no admite baja automática: te aparecerá en Tuyos")}, "Dar de baja")));
 }
@@ -1200,7 +1258,7 @@ function cartaSimple(m) {
       baja ? el("a", {class: "plano", href: baja.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir la baja en " + baja.hostname) : null,
       outlook ? el("a", {class: "plano", href: outlook.href, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null,
       estado.tab === "arch" ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
-      el("button", {class: "plano archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
+      el("button", {class: "plano archivo", type: "button", onclick: () => archivarDeshacible([m], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
       botonCarpeta(m),
       botonLeido(m),
       botonFuera(m),
@@ -2155,7 +2213,7 @@ function barraOutlook(m) {
     // Las reacciones (pulgar, corazón…) solo las puede poner Outlook: este botón abre ahí el mismo correo.
     el("button", {class: "accion" + (estado.reaccionando ? " activa" : ""), type: "button", "aria-pressed": estado.reaccionando ? "true" : "false", onclick: () => { estado.reaccionando = !estado.reaccionando; pintarDetalle(); }}, icono("reaccion"), "Reaccionar"),
     // Archivar también desde arriba, sin bajar hasta el final del correo.
-    m.archivado ? null : el("button", {class: "accion verde", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, icono("archivo"), "Archivar en " + carpetaDe(m).nombre),
+    m.archivado ? null : el("button", {class: "accion verde", type: "button", onclick: () => archivarDeshacible([m], "Archivado en " + carpetaDe(m).nombre)}, icono("archivo"), "Archivar en " + carpetaDe(m).nombre),
     m.archivado ? null : el("button", {class: "accion" + (eligiendo === m.id ? " activa" : ""), type: "button", "aria-expanded": eligiendo === m.id ? "true" : "false", onclick: () => { eligiendo = eligiendo === m.id ? null : m.id; estado.carpetaArriba = true; pintar(); pintarDetalle(); }}, icono("carpeta"), "Otra carpeta"));
 }
 function panelManual(m) {
@@ -2266,7 +2324,7 @@ function construirDetalle(d) {
       esArchivar ? el("button", {class: "plano", type: "button", onclick: () => hacer(() => pasarATuyos(m), [m.id], "Pasado a Tuyos: se queda en la bandeja", true)}, "No archivar, es mío") : null,
       m.archivado
         ? el("button", {class: "lleno", type: "button", onclick: () => reactivar(m)}, "Devolver a la bandeja")
-        : el("button", {class: "lleno archivo", type: "button", onclick: () => hacer(() => archivar(m), [m.id], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
+        : el("button", {class: "lleno archivo", type: "button", onclick: () => archivarDeshacible([m], "Archivado en " + carpetaDe(m).nombre)}, "Archivar en " + carpetaDe(m).nombre),
       m.archivado ? null : botonCarpeta(m),
       botonFuera(m)),
       m.archivado || estado.carpetaArriba ? null : selectorCarpeta(m));
