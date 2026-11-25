@@ -297,3 +297,10 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .sobre .cita{margin:0;color:#55606E;font-style:italic;font-size:.93em}
 .sobre textarea.verde{color:#1E7B34;font-weight:700;min-height:74px}
 .sobre textarea.corta{min-height:96px}
+
+.enlace-barra{position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:60;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 14px;border-radius:12px;background:#13345B;color:#fff;box-shadow:0 8px 28px rgba(0,0,0,.35);border-left:6px solid #C2935A}
+.enlace-texto{flex:1 1 240px;min-width:0;overflow-wrap:anywhere}
+.enlace-texto b{font-weight:700}
+.enlace-texto small{display:block;opacity:.75;font-size:.8em;margin-top:2px}
+.enlace-ojo{color:#FFD79A}
+.enlace-barra .plano{background:transparent;color:#fff;border-color:rgba(255,255,255,.5)}

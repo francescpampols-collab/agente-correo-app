@@ -119,6 +119,13 @@
     setTimeout(ajustar, 400);
     setTimeout(ajustar, 2000);
   });
+  // Los enlaces no se abren desde aquí: se avisa a la aplicación, que enseña a dónde llevan y los abre fuera.
+  document.addEventListener("click", (e) => {
+    const a = e.target && e.target.closest ? e.target.closest("a[href], area[href]") : null;
+    if (!a) return;
+    e.preventDefault();
+    if (e.isTrusted) parent.postMessage({tipo: "enlace", url: a.href}, "*");
+  }, true);
   window.addEventListener("resize", ajustar);
   parent.postMessage({tipo: "listo"}, "*");
 })();

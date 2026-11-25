@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=81".slice(2));
+const VERSION = Number("v=82".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -594,6 +594,32 @@ async function quienSoy() {
 }
 // Marcos aislados abiertos ahora mismo (el correo y, si se ve, la firma).
 let marcos = [];
+// Enlaces y botones de un correo: al tocarlos se enseña a qué sitio llevan de verdad (lo que pone el botón
+// puede no coincidir) y se abren fuera de la app, en el navegador, con un toque más.
+function ofrecerEnlace(direccion) {
+  let u;
+  try { u = new URL(direccion); } catch (e) { return; }
+  if (!["https:", "http:", "mailto:"].includes(u.protocol)) return;
+  const vieja = $("enlace");
+  if (vieja) vieja.remove();
+  const cerrar = () => { clearTimeout(reloj); barra.remove(); };
+  const sitio = u.protocol === "mailto:" ? decodeURIComponent(u.pathname) : u.hostname;
+  const abrir = el("button", {class: "lleno corto", type: "button", onclick: () => {
+    cerrar();
+    // En la aplicación Android, navegar a una dirección de fuera hace que el móvil la abra en el navegador.
+    if (window.agenteApk && u.protocol !== "http:") location.href = u.href;
+    else window.open(u.href, "_blank", "noopener,noreferrer");
+  }}, u.protocol === "mailto:" ? "Escribirle" : "Abrir");
+  const barra = el("div", {id: "enlace", class: "enlace-barra", role: "dialog", "aria-label": "Abrir enlace"},
+    el("div", {class: "enlace-texto"},
+      el("span", {}, u.protocol === "mailto:" ? "Escribir a " : "Este enlace lleva a "), el("b", {}, sitio),
+      u.protocol === "http:" ? el("span", {class: "enlace-ojo"}, " (sin cifrar)") : null,
+      u.protocol === "mailto:" ? null : el("small", {}, u.href.length > 90 ? u.href.slice(0, 90) + "…" : u.href)),
+    el("button", {class: "plano corto", type: "button", onclick: cerrar}, "Cancelar"), abrir);
+  document.body.append(barra);
+  const reloj = setTimeout(cerrar, 15000);
+  abrir.focus({preventScroll: true});
+}
 window.addEventListener("message", (e) => {
   const marco = marcos.find((x) => x.contentWindow === e.source);
   if (!marco || !e.data) return;
@@ -602,12 +628,14 @@ window.addEventListener("message", (e) => {
   if (e.data.tipo === "listo" && marco.html) {
     marcos = marcos.filter((x) => x.isConnected);
     marco.contentWindow.postMessage({tipo: "correo", html: marco.html}, "*");
+  } else if (e.data.tipo === "enlace" && typeof e.data.url === "string") {
+    ofrecerEnlace(e.data.url);
   } else if (e.data.tipo === "alto" && Number.isFinite(e.data.alto)) {
     marco.style.height = Math.min(Math.max(e.data.alto, 40), 30000) + "px";
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=81"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=82"});
   marco.html = html;
   marcos.push(marco);
   return marco;
