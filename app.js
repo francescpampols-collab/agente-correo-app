@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=83".slice(2));
+const VERSION = Number("v=84".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -603,7 +603,14 @@ function ofrecerEnlace(direccion) {
   const vieja = $("enlace");
   if (vieja) vieja.remove();
   const cerrar = () => { clearTimeout(reloj); barra.remove(); };
-  const sitio = u.protocol === "mailto:" ? decodeURIComponent(u.pathname) : u.hostname;
+  const sitio = u.protocol === "mailto:" ? decodeURIComponent(u.pathname) : u.host;
+  // La primera versión del APK no puede entregar enlaces http al navegador. Si el sitio es una dirección
+  // numérica o lleva puerto (un servidor interno), pedirlo por https no funciona: hay que actualizar la app.
+  const apkViejo = window.agenteApk && !(Number(window.agenteApk.version) >= 2);
+  const sinSalida = apkViejo && u.protocol === "http:" && (u.port || /^[\d.]+$/.test(u.hostname));
+  const copiar = el("button", {class: "plano corto", type: "button", onclick: async () => {
+    try { await navigator.clipboard.writeText(u.href); avisar("Enlace copiado"); } catch (e) { avisar("No se ha podido copiar"); }
+  }}, "Copiar");
   const abrir = el("button", {class: "lleno corto", type: "button", onclick: () => {
     cerrar();
     // En la aplicación Android, navegar a una dirección de fuera hace que el móvil la abra en el navegador.
@@ -611,15 +618,20 @@ function ofrecerEnlace(direccion) {
     if (window.agenteApk) location.href = u.protocol === "http:" && !(Number(window.agenteApk.version) >= 2) ? u.href.replace(/^http:/i, "https:") : u.href;
     else window.open(u.href, "_blank", "noopener,noreferrer");
   }}, u.protocol === "mailto:" ? "Escribirle" : "Abrir");
+  const actualizar = el("button", {class: "lleno corto", type: "button", onclick: () => {
+    cerrar();
+    location.href = "https://francescpampols-collab.github.io/agente-correo-app/apk/agente-correo-2.apk";
+  }}, "Actualizar la app");
   const barra = el("div", {id: "enlace", class: "enlace-barra", role: "dialog", "aria-label": "Abrir enlace"},
     el("div", {class: "enlace-texto"},
       el("span", {}, u.protocol === "mailto:" ? "Escribir a " : "Este enlace lleva a "), el("b", {}, sitio),
       u.protocol === "http:" ? el("span", {class: "enlace-ojo"}, " (sin cifrar)") : null,
-      u.protocol === "mailto:" ? null : el("small", {}, u.href.length > 90 ? u.href.slice(0, 90) + "…" : u.href)),
-    el("button", {class: "plano corto", type: "button", onclick: cerrar}, "Cancelar"), abrir);
+      u.protocol === "mailto:" ? null : el("small", {}, u.href.length > 90 ? u.href.slice(0, 90) + "…" : u.href),
+      sinSalida ? el("small", {class: "enlace-ojo"}, "Esta versión de la app no puede abrir enlaces http como este. Actualízala (tarda un minuto y no pierdes la sesión) o copia el enlace y pégalo en el navegador.") : null),
+    el("button", {class: "plano corto", type: "button", onclick: cerrar}, "Cancelar"), u.protocol === "mailto:" ? null : copiar, sinSalida ? actualizar : abrir);
   document.body.append(barra);
-  const reloj = setTimeout(cerrar, 15000);
-  abrir.focus({preventScroll: true});
+  const reloj = setTimeout(cerrar, sinSalida ? 40000 : 15000);
+  (sinSalida ? actualizar : abrir).focus({preventScroll: true});
 }
 window.addEventListener("message", (e) => {
   const marco = marcos.find((x) => x.contentWindow === e.source);
@@ -636,7 +648,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=83"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=84"});
   marco.html = html;
   marcos.push(marco);
   return marco;
