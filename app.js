@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=88".slice(2));
+const VERSION = Number("v=89".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -714,11 +714,28 @@ function ofrecerEnlace(direccion) {
   const reloj = setTimeout(cerrar, sinSalida ? 40000 : 15000);
   (sinSalida ? actualizar : abrir).focus({preventScroll: true});
 }
+// Copia de reserva en el dispositivo (sw.js): la app arranca aunque su servidor no responda en esa red.
+let copiaAvisada = false;
+function prepararCopia() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (!e.data || e.data.tipo !== "copia" || copiaAvisada) return;
+    copiaAvisada = true;
+    avisar("Esta red no llega al servidor de la app: usando la copia guardada. Tu correo funciona con normalidad.");
+  });
+  navigator.serviceWorker.register("sw.js").then(() => navigator.serviceWorker.ready).then((reg) => {
+    const propios = Array.from(document.querySelectorAll("script[src], link[href]")).map((n) => n.getAttribute("src") || n.getAttribute("href")).filter((x) => x && !/^[a-z]+:/i.test(x));
+    const v = "v=" + VERSION;
+    const lista = ["./"].concat(propios, ["lector.html?" + v, "lector.js?" + v, "manifest.webmanifest", "icono-192.png", `pdfjs/pdf.min.js?v=${PDFJS}`, `pdfjs/pdf.worker.min.js?v=${PDFJS}`, "fuentes/barlow-latin-400-normal.woff2", "fuentes/barlow-latin-500-normal.woff2", "fuentes/barlow-latin-600-normal.woff2", "fuentes/barlow-semi-condensed-latin-600-normal.woff2"]);
+    if (reg.active) reg.active.postMessage({tipo: "guardar", urls: lista});
+  }).catch(() => {});
+}
 window.addEventListener("message", (e) => {
   const marco = marcos.find((x) => x.contentWindow === e.source);
   if (!marco || !e.data) return;
   // El móvil puede volver a cargar el marco al desplazar la página (lo descarta para ahorrar memoria):
   // cada vez que avisa de que está listo se le vuelve a dar el correo, o se quedaría en blanco.
+  if (e.data.tipo === "listo") marco.respondio = true;
   if (e.data.tipo === "listo" && marco.html) {
     marcos = marcos.filter((x) => x.isConnected);
     marco.contentWindow.postMessage({tipo: "correo", html: marco.html}, "*");
@@ -729,9 +746,17 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=88"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=89"});
   marco.html = html;
   marcos.push(marco);
+  // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
+  // se pasa solo a la vista de texto, que no lo necesita.
+  if (!titulo) setTimeout(() => {
+    if (marco.respondio || !marco.isConnected || estado.soloTexto) return;
+    estado.soloTexto = true;
+    avisar("No se puede cargar el visor con formato en esta red: te enseño el correo como texto.");
+    pintarDetalle();
+  }, 9000);
   return marco;
 }
 // Tu firma de Outlook tal como saldrá al final del correo.
@@ -2468,6 +2493,7 @@ function salir() {
   pantallaInicio(false);
 }
 async function arrancar() {
+  prepararCopia();
   const q = new URLSearchParams(location.search);
   if (location.search) history.replaceState(null, "", REDIR);
   if (!config()) { borrar("agente.cfg"); borrar("agente.tok"); pantallaInicio(true); return; }
