@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=90".slice(2));
+const VERSION = Number("v=91".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -746,7 +746,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=90"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=91"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -1244,9 +1244,10 @@ async function cargarRespuestas() {
         for (const x of (res && res.responses) || []) {
           const m = quedan[Number(x.id)];
           if (!m || x.status !== 200 || !x.body) continue;
-          estado.respuestas[m.id] = (x.body.value || [])
-            .filter((e) => (e.sentDateTime || "") >= (m.receivedDateTime || ""))
-            .sort((a, b) => (a.sentDateTime || "").localeCompare(b.sentDateTime || ""))
+          // Lo que contestaste después de este mensaje; si no hay nada posterior, tu última respuesta anterior en el hilo.
+          const mias = (x.body.value || []).sort((a, b) => (a.sentDateTime || "").localeCompare(b.sentDateTime || ""));
+          const despues = mias.filter((e) => (e.sentDateTime || "") >= (m.receivedDateTime || ""));
+          estado.respuestas[m.id] = (despues.length ? despues : mias.slice(-1))
             .map((e) => ({fecha: e.sentDateTime, asunto: e.subject || "", para: (e.toRecipients || []).map((t) => (t.emailAddress || {}).name || (t.emailAddress || {}).address || "").filter(Boolean),
               dirs: (e.toRecipients || []).concat(e.ccRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()).filter((a) => CORREO.test(a)),
               texto: limpiarMio(((e.uniqueBody || {}).content) || e.bodyPreview || "")}));
