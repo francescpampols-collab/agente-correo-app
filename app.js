@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=92".slice(2));
+const VERSION = Number("v=93".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -746,7 +746,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=92"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=93"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -2645,7 +2645,7 @@ async function enviarHoja(h) {
   }
   await subirAdjuntos(nuevo.id, h.adjuntos);
   await api("POST", `/me/messages/${id(nuevo.id)}/send`);
-  if (h.esperaId) { estado.espera = (estado.espera || []).filter((e) => e.id !== h.esperaId); estado.hilosMios = null; }
+  if (h.esperaId) { estado.espera = (estado.espera || []).filter((e) => e.id !== h.esperaId); estado.esperaOtros = (estado.esperaOtros || []).filter((e) => e.id !== h.esperaId); }
   cerrarHoja();
   pintar();
 }
@@ -2730,15 +2730,19 @@ async function cargarEspera(forzar) {
       if ((ultimaAjena[e.conversationId] || "") > e.sentDateTime) continue;       // ya te contestaron
       const dirs = (e.toRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()).filter((a) => CORREO.test(a));
       if (!dirs.length || dirs.every((a) => a.toLowerCase() === yo)) continue;
-      const texto = limpiarMio(e.bodyPreview || "");
-      // Un «gracias» o un «ok» no espera respuesta: fuera. Una pregunta o una petición, arriba.
-      if (texto.length < 25 && !/\?/.test(texto)) continue;
-      const pide = /\?|\b(confirm|dime|dim'|digues|avisa|puedes|podr[ií]as|pots|podeu|necesito|necessito|env[ií]a|pasa|passa|please|could you|let me know|quedo a la espera|espero)/i.test(texto);
+      // Solo tu texto: fuera lo que arrastra el correo reenviado o citado debajo.
+      const texto = limpiarMio(e.bodyPreview || "").split(/\n?_{6,}|\n\s*(?:From|De|Enviado|Sent)\s*:|-----\s*(?:Original|Mensaje)/i)[0].trim();
+      // Un «gracias» o un «ok» no espera respuesta: fuera.
+      if (texto.length < 12 && !/\?/.test(texto)) continue;
+      // «Pedías respuesta»: hay una pregunta o le pides que conteste. Una instrucción («cancela esto») no cuenta.
+      const pide = /\?/.test(texto) || /\b(conf[ií]rma|dime\b|digues|digue'm|av[ií]sa|quedo a la espera|espero (tu|vuestra|su|la teva|la vostra|resp)|ya me dices|ja em dius|let me know|please confirm|get back to me)/i.test(texto);
       lista.push({id: e.id, asunto: e.subject || "(sin asunto)", para: (e.toRecipients || []).map((t) => (t.emailAddress || {}).name || (t.emailAddress || {}).address || "").filter(Boolean), dirs,
         cc: (e.ccRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()).filter((a) => CORREO.test(a) && a.toLowerCase() !== yo),
         fecha: e.sentDateTime, dias: Math.floor(dias), texto, pide, enlace: e.webLink || ""});
     }
-    estado.espera = lista.sort((a, b) => Number(b.pide) - Number(a.pide) || a.fecha.localeCompare(b.fecha));
+    // En la pestaña van los que pedían respuesta; el resto (instrucciones, reenvíos) queda aparte, plegado.
+    estado.espera = lista.filter((e) => e.pide).sort((a, b) => a.fecha.localeCompare(b.fecha));
+    estado.esperaOtros = lista.filter((e) => !e.pide).sort((a, b) => b.fecha.localeCompare(a.fecha));
     estado.esperaHora = Date.now();
   } catch (e) { avisar("No se ha podido leer lo enviado: " + e.message); }
   estado.esperaCargando = false;
@@ -2761,18 +2765,20 @@ function cartaEspera(e) {
     el("div", {class: "de"}, el("b", {}, "Para " + e.para.slice(0, 3).join(", ") + (e.para.length > 3 ? " y " + (e.para.length - 3) + " más" : ""))),
     el("div", {class: "asunto"}, e.asunto),
     el("span", {class: "marca " + (e.dias >= 5 ? "cola" : "hecho")}, "Sin respuesta desde hace " + e.dias + " días"),
-    e.pide ? el("span", {class: "marca cola"}, "Pedías algo") : null,
+
     el("p", {class: "pide"}, e.texto.slice(0, 220)),
     el("div", {class: "fila"},
       abrir0 ? el("a", {class: "plano", href: abrir0, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null,
-      el("button", {class: "plano", type: "button", onclick: () => { guardar("agente.noespero", Array.from(noEspero()).concat(e.id).slice(-400)); estado.espera = estado.espera.filter((x) => x.id !== e.id); pintar(); }}, "No espero respuesta"),
+      el("button", {class: "plano", type: "button", onclick: () => { guardar("agente.noespero", Array.from(noEspero()).concat(e.id).slice(-400)); estado.espera = (estado.espera || []).filter((x) => x.id !== e.id); estado.esperaOtros = (estado.esperaOtros || []).filter((x) => x.id !== e.id); pintar(); }}, "No espero respuesta"),
       el("button", {class: "lleno", type: "button", onclick: () => recordar(e)}, "Recordárselo")));
 }
 function panelEspera() {
   if (estado.esperaCargando && !estado.espera) return [el("div", {class: "vacio"}, el("b", {}, "Mirando lo que has enviado…"), "Un momento.")];
-  const lista = estado.espera || [];
-  const cabeza = el("p", {class: "pide"}, lista.length ? `Correos tuyos de los últimos ${ESPERA_TOPE} días que llevan más de ${ESPERA_DIAS} sin respuesta. Arriba, los que pedían algo.` : "");
-  return lista.length ? [cabeza].concat(lista.map(cartaEspera)) : [el("div", {class: "vacio"}, el("b", {}, "Nadie te debe respuesta"), `No hay correos tuyos de más de ${ESPERA_DIAS} días sin contestar.`)];
+  const lista = estado.espera || [], otros = estado.esperaOtros || [];
+  const cabeza = el("p", {class: "pide"}, `Correos tuyos de los últimos ${ESPERA_TOPE} días en los que preguntabas o pedías contestación, y llevan más de ${ESPERA_DIAS} sin respuesta. Primero los más antiguos.`);
+  const resto = otros.length ? el("details", {class: "resumen-ext"}, el("summary", {}, `Otros enviados sin respuesta (${otros.length}): instrucciones y reenvíos que quizá no la necesitan`), ...otros.map(cartaEspera)) : null;
+  const cuerpo = lista.length ? [cabeza].concat(lista.map(cartaEspera)) : [el("div", {class: "vacio"}, el("b", {}, "Nadie te debe respuesta"), `No hay preguntas tuyas de más de ${ESPERA_DIAS} días sin contestar.`)];
+  return resto ? cuerpo.concat(resto) : cuerpo;
 }
 
 // ---------- decisión de un toque ----------
