@@ -342,3 +342,10 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .buscador label.ancho{flex:1 1 100%}
 .motivo{border-left:3px solid #1E7B34;padding-left:10px}
 .nota-ia{background:#fff;border-left:5px solid var(--marino);padding:12px 14px;border-radius:8px}
+.hilo-estado{cursor:auto;gap:8px;border-left:5px solid var(--gris)}
+.hilo-estado.movido{border-left-color:#C2935A}
+.paso-hilo{display:flex;flex-direction:column;gap:2px;text-align:left;background:#F3F5F9;border:1px solid #D5DBE6;border-radius:8px;padding:10px 12px;font:inherit;color:inherit;cursor:pointer;width:100%}
+.paso-hilo.mio{background:#EAF4EC;border-color:#BFD9C5}
+.hilo-estado details{display:flex;flex-direction:column;gap:8px}
+.hilo-estado summary{cursor:pointer;color:var(--azul,#1B5FA8);padding:6px 0}
+.hilo-estado details .paso-hilo{margin-top:8px}

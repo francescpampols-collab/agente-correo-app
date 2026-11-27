@@ -27,7 +27,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=96".slice(2));
+const VERSION = Number("v=97".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -587,6 +587,65 @@ function abrir(mid) {
   if (abierto && abierto.isRead === false) marcarLeido(abierto, true);
   pintar();
   cargarCorreo(mid);
+  cargarHilo(mid);
+}
+// ---------- el hilo: qué ha pasado en la conversación antes y después de este correo ----------
+// Al abrir un correo (sobre todo uno antiguo, encontrado con el buscador) se ve si el asunto se ha movido después.
+async function cargarHilo(mid) {
+  estado.hilos = estado.hilos || {};
+  if (estado.hilos[mid] && !estado.hilos[mid].error) return;
+  const m = todos().find((x) => x.id === mid);
+  if (!m) return;
+  estado.hilos[mid] = {cargando: true};
+  try {
+    const fuera = await carpetasFuera();
+    let conv = m.conversationId, fecha = m.receivedDateTime;
+    if (!conv || !fecha) { const x = await api("GET", `/me/messages/${id(mid)}?$select=conversationId,receivedDateTime`); conv = m.conversationId = x.conversationId; fecha = fecha || x.receivedDateTime; }
+    if (!conv) { estado.hilos[mid] = {antes: [], despues: []}; return; }
+    const j = await api("GET", "/me/messages?$filter=" + encodeURIComponent(`conversationId eq '${String(conv).replace(/'/g, "''")}'`) + "&$select=" + CAMPOS_BUSCA + ",isDraft,sentDateTime&$top=100");
+    const vistos = new Set();
+    const otros = (j.value || []).filter((c) => c.id !== mid && !c.isDraft && !fuera.has(c.parentFolderId))
+      .map((c) => { c.cuando = c.receivedDateTime || c.sentDateTime || ""; c.mio = c.parentFolderId === estado.enviadosId; return c; })
+      // El mismo mensaje puede estar dos veces (en Enviados y recibido en copia): se cuenta una.
+      .filter((c) => { const k = c.cuando.slice(0, 16) + "|" + dir(c); if (vistos.has(k)) return false; vistos.add(k); return true; })
+      .sort((a, b) => a.cuando.localeCompare(b.cuando));
+    estado.hilos[mid] = {antes: otros.filter((c) => c.cuando <= fecha), despues: otros.filter((c) => c.cuando > fecha)};
+  } catch (e) { estado.hilos[mid] = {error: e.message}; }
+  if (estado.sel === mid) pintarDetalle();
+}
+function abrirDelHilo(c) {
+  if (!todos().some((x) => x.id === c.id)) {
+    const nombres = {};
+    for (const [n, i] of Object.entries(estado.carpetas || {})) nombres[i] = n;
+    c.archivado = true; c.enviado = c.mio; c.enEntrada = c.parentFolderId === estado.bandejaId; c.carpeta = nombres[c.parentFolderId] || "otra carpeta";
+    estado.datos.busca.push(c);
+  }
+  abrir(c.id);
+}
+function lineaHilo(c) {
+  const e = (c.from || {}).emailAddress || {};
+  const f = new Date(c.cuando);
+  const cuando = isNaN(f) ? "" : f.toLocaleDateString("es-ES", {day: "numeric", month: "short", year: f.getFullYear() === new Date().getFullYear() ? undefined : "numeric"}) + ", " + f.toLocaleTimeString("es-ES", {hour: "2-digit", minute: "2-digit"});
+  return el("button", {class: "paso-hilo" + (c.mio ? " mio" : ""), type: "button", onclick: () => abrirDelHilo(c)},
+    el("b", {}, c.mio ? "Tú" + (paraQuien(c) ? " a " + paraQuien(c) : "") : (e.name || e.address || "(sin remitente)")),
+    el("span", {class: "de"}, cuando + (c.hasAttachments ? " · con adjuntos" : "")),
+    el("span", {class: "pide"}, extracto(c).replace(/\s+/g, " ").slice(0, 160)));
+}
+function bloqueHilo(m) {
+  const h = (estado.hilos || {})[m.id];
+  if (!h || h.error) return null;
+  if (h.cargando) return el("div", {class: "carta hilo-estado"}, el("span", {class: "eti"}, "Hilo"), el("p", {class: "pide"}, "Mirando si el hilo se ha movido…"));
+  if (!h.antes.length && !h.despues.length) return !m.archivado ? null : el("div", {class: "carta hilo-estado"}, el("span", {class: "eti"}, "Hilo"), el("p", {class: "pide normal"}, "Correo suelto: no hay más mensajes en esta conversación."));
+  const ultimo = h.despues[h.despues.length - 1];
+  const dias = Math.floor((Date.now() - Date.parse(ultimo ? ultimo.cuando : m.receivedDateTime)) / 86400000);
+  const hace = dias <= 0 ? "hoy" : dias === 1 ? "ayer" : "hace " + dias + " días";
+  return el("div", {class: "carta hilo-estado" + (h.despues.length ? " movido" : "")},
+    el("span", {class: "eti"}, "Hilo"),
+    h.despues.length
+      ? el("p", {class: "pide normal"}, el("b", {}, "El hilo se ha movido: "), (h.despues.length === 1 ? "hay 1 mensaje posterior" : "hay " + h.despues.length + " mensajes posteriores") + " a este. El último es de " + hace + (ultimo.mio ? ", tuyo." : "."))
+      : el("p", {class: "pide normal"}, el("b", {}, "Sin movimiento: "), "este es el último mensaje del hilo (" + hace + ")."),
+    ...h.despues.map(lineaHilo),
+    h.antes.length ? el("details", {}, el("summary", {}, h.antes.length === 1 ? "Ver el mensaje anterior" : "Ver los " + h.antes.length + " mensajes anteriores"), ...h.antes.map(lineaHilo)) : null);
 }
 // Trae el correo entero (texto y lista de adjuntos) para leerlo dentro de la app.
 function direcciones(lista) {
@@ -749,7 +808,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=96"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=97"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -1045,7 +1104,7 @@ async function carpetasFuera() {
 }
 // Lo que se busca: palabras sueltas (asunto, texto, remitente, destinatarios y adjuntos) y, aparte,
 // quién lo envió, a quién iba y palabras del asunto. Todo lo escrito tiene que cumplirse a la vez.
-const CAMPOS_BUSCA = "id,subject,from,toRecipients,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,parentFolderId,isRead";
+const CAMPOS_BUSCA = "id,subject,from,toRecipients,bodyPreview,receivedDateTime,categories,webLink,hasAttachments,parentFolderId,isRead,conversationId";
 function palabrasBusca(t) { return String(t || "").replace(/["\\():*]/g, " ").split(/\s+/).filter(Boolean).slice(0, 8); }
 function consultaBusca(comodin) {
   const f = estado.filtros, p = [];
@@ -2512,6 +2571,7 @@ function construirDetalle(d) {
       barraOutlook(m),
       estado.carpetaArriba ? selectorCarpeta(m) : null,
       barraReacciones(m)),
+    bloqueHilo(m),
     panelManual(m),
     bloquePropuesta(m, esRespuesta),
     bloqueResumen(m, p, c),
