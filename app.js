@@ -19,13 +19,13 @@ const iaCaidos = new Map();
 const IA_NOMBRES = {"claude-fable-5-2": "Fable 5.2", "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5"};
 const ESTILO_BASE = "Muy corto y directo, al grano en la primera frase. Idioma: catalán con el equipo interno de Pampols y con empresas catalanas; castellano con proveedores de fuera; inglés si le escriben en inglés. Saludo «Hola [nombre],» o ninguno. Cierre «Gràcies,» o «Gracias,» y en la línea siguiente «Francesc». Sin fórmulas de relleno, sin guiones largos, sin listas ni negritas.";
 const CAT = {resp: "Agente: responder", news: "Agente: boletín", arch: "Agente: archivar", pend: "Agente: pendiente", baja: "Agente: baja", manual: "Agente: baja manual"};
-const PESTANAS = [["nuevo", "Nuevos"], ["resp", "Responder"], ["news", "Boletines"], ["arch", "Archivar"], ["pend", "Tuyos"], ["busca", "Buscar"]];
+const PESTANAS = [["nuevo", "Nuevos"], ["resp", "Responder"], ["news", "Boletines"], ["arch", "Archivar"], ["pend", "Tuyos"], ["espera", "Esperando"], ["busca", "Buscar"]];
 const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read";
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=91".slice(2));
+const VERSION = Number("v=92".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -59,7 +59,7 @@ function guardarYa() {
   for (const [k, x] of Object.entries(estado.propuestas)) if (x && x.fase !== "cargando") propuestas[k] = x; else if (x && x.texto) propuestas[k] = Object.assign({}, x, {fase: "lista"});
   const lista = document.getElementById("lista"), detalle = document.getElementById("detalle");
   if (!restaurando) { lugar.y = lista ? lista.scrollTop : 0; lugar.yd = detalle ? detalle.scrollTop : 0; lugar.tab = estado.tab; }
-  guardar("agente.trabajo", {propuestas, resumenes: estado.resumenes, editados: estado.editados, redacta: estado.redacta, sel: estado.sel, tab: estado.tab, soloTexto: !!estado.soloTexto, y: lugar.y, yd: lugar.yd, ytab: lugar.tab});
+  guardar("agente.trabajo", {propuestas, resumenes: estado.resumenes, editados: estado.editados, redacta: estado.redacta ? Object.assign({}, estado.redacta, {adjuntos: undefined}) : null, sel: estado.sel, tab: estado.tab, soloTexto: !!estado.soloTexto, y: lugar.y, yd: lugar.yd, ytab: lugar.tab});
 }
 function guardarTrabajo() {
   clearTimeout(relojTrabajo);
@@ -357,7 +357,7 @@ async function cargar() {
   $("recargar").disabled = false;
   pintar();
   if (estado.cargado) reintentarSalida();
-  cargarEnviados().then(() => { if (!estado.sel) pintar(); return cargarRespuestas(); }).catch(() => cargarRespuestas().catch(() => {}));
+  cargarEnviados().then(() => { if (!estado.sel) pintar(); return cargarRespuestas(); }).catch(() => cargarRespuestas().catch(() => {})).then(() => cargarEspera()).catch(() => {});
   quienSoy().then(listarAdjuntos).then(() => { precargarFicheros(); prepararVisor(); return precargar(); }).then(cargarContactos).then(clasificarNuevos).catch(() => {});
 }
 function todos() { return [].concat(estado.datos.busca || [], estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
@@ -746,7 +746,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=91"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=92"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -1114,6 +1114,7 @@ function panelBusqueda() {
     el("button", {class: "lleno", type: "button", disabled: estado.buscando ? "" : null, onclick: buscar}, estado.buscando ? "Buscando…" : "Buscar"),
     (estado.datos.busca || []).length || estado.buscado ? el("button", {class: "plano", type: "button", onclick: limpiarBusqueda}, "Limpiar") : null,
     el("button", {class: "enlace izquierda", type: "button", onclick: () => { if (estado.fuera) { estado.fuera = null; pintar(); } else verFuera(); }}, estado.fuera ? "Ocultar los que dejaste solo en Outlook" : "Ver los correos que dejaste solo en Outlook"),
+    el("button", {class: "enlace izquierda", type: "button", onclick: () => { estado.diaVisible = true; estado.tab = "pend"; pintar(); }}, "Ver el resumen de hoy"),
     leer("agente.ia") ? el("button", {class: "enlace izquierda", type: "button", onclick: probarModelos}, "Probar los modelos de IA") : null);
 }
 // Diagnóstico: una pregunta mínima a cada modelo con tu clave, para ver cuál responde, cuánto tarda
@@ -1172,6 +1173,7 @@ function fichaResumen(texto, clase) {
   }));
 }
 // Cuántos matices («Ojo») trae la ficha: si hay alguno, se avisa antes de abrir.
+const matices0 = (m) => matices(m);
 function matices(m) { return lineasResumen(prop(m).resumen).filter((l) => /^Ojo\s*:/i.test(l)).length; }
 // Afirmaciones de un report comercial que no llevan importe ni fecha: lo que hay que pedir que concreten.
 function flojas(m) {
@@ -1629,6 +1631,8 @@ Devuelve solo JSON válido con estos campos:
   "- Ojo: " una línea por cada matiz que una ficha aplana: tono (molestia, queja, urgencia, presión), condiciones o salvedades, algo que se da por hecho sin estar acordado, contradicciones con el hilo o con los adjuntos, ambigüedades, lo que no dice y debería, riesgos, o que varias personas esperan cosas distintas.
   Frases cortas, con nombres, cifras y fechas exactas; en castellano. Un correo sencillo son 2 o 3 líneas. Un correo complicado o delicado (queja, tema de personal, negociación, conflicto, hilo largo con posturas distintas, varias decisiones enlazadas) NO se simplifica: pon todos los "Punto" y "Ojo" que hagan falta, hasta 350 palabras, y empieza los "Ojo" con uno que diga "conviene leer el original" y por qué. Esquemático no es incompleto: si dudas entre omitir un matiz o ponerlo, ponlo. En un boletín o aviso sin contenido, una sola línea "- Quiere: …".
 - "sin_concretar": solo para reports, informes o partes de comerciales; en cualquier otro correo, lista vacía. Francesc quiere seguir de cerca lo importante sin agobiar al comercial: elige como mucho DOS asuntos, los que más dinero mueven o los que más se arrastran, en los que el comercial da por hecha o muy probable una venta relevante sin decir cuánto ni cuándo ("nos pasará pedido", "comprará", "con intención de cerrar", una oferta grande sin fecha). Si no hay ninguno que de verdad lo merezca, lista vacía: es lo normal en un report correcto. NO incluyas pedidos ya hechos o enviados (por ejemplo "envía compra" o "nuevo pedido"), entregas, muestras, incidencias, recogidas, visitas de rutina ni clientes pequeños, aunque no lleven importe. Para cada asunto: "quien" (el comercial), "cliente", "dicho" (lo que afirma, en 12 palabras como mucho) y "falta" (el único dato que más ayudaría: normalmente la fecha prevista o el importe aproximado), en tono neutro, sin juzgar. En el "resumen" de un report di con naturalidad qué hay cerrado y qué son intenciones, sin tono de reproche.
+- "opciones": de 0 a 4 respuestas cortas entre las que Francesc elegiría con un toque. Solo cuando el correo se resuelve con una decisión suya clara: aprobar o no, elegir entre alternativas, aceptar una fecha, dar el visto bueno. Cada una de 2 a 6 palabras, distintas entre sí, en castellano y como las diría él ("Sí, adelante", "No, de momento", "Que lo lleve Pau", "Pide otro presupuesto"). Si el correo no le pide decidir nada, o la respuesta necesita explicación, lista vacía.
+- "cita": si el correo convoca, propone o confirma una reunión, visita, llamada o acto con día concreto, o fija un plazo con fecha: {"titulo": breve (con quién o de qué), "inicio": "AAAA-MM-DDTHH:MM" en hora de España (o solo "AAAA-MM-DD" si no dice hora), "fin": igual o "", "lugar": el sitio o el enlace o ""}. Resuelve "el jueves" o "mañana" a partir de la fecha del correo. Si no hay un día concreto, pon "cita": null.
 - "sospechoso": true si pide cambiar datos bancarios, pagos urgentes, credenciales o algo anómalo; si no, false.`;
 function avisoPropio(m) { return dir(m).toLowerCase() === "notifications@github.com" && /^\[francescpampols-collab\/agente-correo[^\]]*\]\s*Run (failed|cancelled|succeeded)/i.test(m.subject || ""); }
 async function clasificarUno(m) {
@@ -1638,7 +1642,7 @@ async function clasificarUno(m) {
   const yo = (estado.yo || "").toLowerCase();
   const en = (c.a || []).some((x) => x.toLowerCase().includes(yo)) ? "para" : (c.cc || []).some((x) => x.toLowerCase().includes(yo)) ? "copia" : "oculto o lista";
   const criterios = await leerCriterios();
-  const texto = `Francesc figura en: ${yo ? en : "no se sabe"}.\n${correoParaIA(m)}`;
+  const texto = `Francesc figura en: ${yo ? en : "no se sabe"}.\nFecha del correo: ${m.receivedDateTime || ""}\n${correoParaIA(m)}`;
   const res = await iaConAdjuntos(m, SISTEMA_FILTRO + (criterios ? "\n\n" + criterios : ""), texto, 2500, IA_RAPIDOS);
   const j = JSON.parse(res.texto.slice(res.texto.indexOf("{"), res.texto.lastIndexOf("}") + 1));
   let tipo = j.tipo;
@@ -1649,6 +1653,9 @@ async function clasificarUno(m) {
   const flojas = (Array.isArray(j.sin_concretar) ? j.sin_concretar : []).filter((x) => x && typeof x === "object" && String(x.cliente || "").trim()).slice(0, 2)
     .map((x) => ({quien: String(x.quien || "").trim().slice(0, 160), cliente: String(x.cliente || "").trim().slice(0, 160), dicho: String(x.dicho || "").trim().slice(0, 160), falta: String(x.falta || "").trim().slice(0, 160)}));
   const datos = {tipo, pide, resumen: String(j.resumen || "").trim().slice(0, 3000), sin_concretar: flojas, v: 3, app: true};
+  const opciones = (Array.isArray(j.opciones) ? j.opciones : []).map((x) => String(x || "").trim().slice(0, 60)).filter(Boolean).slice(0, 4);
+  if (opciones.length >= 2) datos.opciones = opciones;
+  if (j.cita && typeof j.cita === "object" && /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(String(j.cita.inicio || "").trim())) datos.cita = {titulo: String(j.cita.titulo || "").trim().slice(0, 200), inicio: String(j.cita.inicio).trim(), fin: String(j.cita.fin || "").trim().slice(0, 20), lugar: String(j.cita.lugar || "").trim().slice(0, 200)};
   if (j.sospechoso === true) { tipo = "pendiente"; Object.assign(datos, {tipo, aviso: "Sospechoso: revisa el remitente antes de hacer nada."}); }
   // Si el motor lo ha clasificado entretanto, manda el motor.
   const ahora = await api("GET", `/me/messages/${id(m.id)}?$select=id,categories`);
@@ -1783,7 +1790,8 @@ async function enviarDerivado(m, d) {
     await api("PATCH", `/me/messages/${id(nuevo.id)}`, Object.assign({body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(d.texto))}}, quien));
   } else if (d.reenviar) {
     nuevo = await api("POST", `/me/messages/${id(m.id)}/createForward`, undefined, "html");
-    await api("PATCH", `/me/messages/${id(nuevo.id)}`, Object.assign({body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(d.texto))}}, quien));
+    const asunto = asuntoCambiado(d, m);
+    await api("PATCH", `/me/messages/${id(nuevo.id)}`, Object.assign(asunto ? {subject: asunto} : {}, {body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(d.texto))}}, quien));
   } else {
     if (!d.asunto.trim()) throw new Error("pon un asunto");
     nuevo = await api("POST", "/me/messages", Object.assign({subject: d.asunto.trim(), body: {contentType: "html", content: await conFirma(d.texto)}}, quien));
@@ -1972,7 +1980,10 @@ async function enviarSobreCorreo(m, x, archivarDespues) {
   const firma = await leerFirma();
   const cabeza = textoAHtml(firma ? sinNombreFinal(x.intro || "") : (x.intro || "")) + arriba + (firma ? "<br>" + firma : "");
   const aLista = (l) => l.map((a) => ({emailAddress: {address: a}}));
-  await api("PATCH", `/me/messages/${id(nuevo.id)}`, {body: {contentType: "html", content: insertarEnCuerpo(puesto.html, cabeza)}, toRecipients: aLista(d.para), ccRecipients: aLista(d.cc), bccRecipients: aLista(d.cco || [])});
+  const cambio = {body: {contentType: "html", content: insertarEnCuerpo(puesto.html, cabeza)}, toRecipients: aLista(d.para), ccRecipients: aLista(d.cc), bccRecipients: aLista(d.cco || [])};
+  const asunto = asuntoCambiado(d, m);
+  if (asunto) cambio.subject = asunto;
+  await api("PATCH", `/me/messages/${id(nuevo.id)}`, cambio);
   await api("POST", `/me/messages/${id(nuevo.id)}/send`);
   delete estado.propuestas[m.id];
   if (!(m.categories || []).includes("Respondido")) {
@@ -2058,7 +2069,7 @@ function bloquePropuesta(m, esRespuesta) {
     const modo = x.todos || (otros > 0 && otros <= 8) ? "todos" : "responder";
     x.destino = Object.assign({modo}, modo === "todos" ? todos0 : solo0);
   }
-  const r = () => ({mid: m.id, modo: x.destino.modo, texto: x.texto, idea: "", para: x.destino.para.slice(), cc: x.destino.cc.slice(), cco: (x.destino.cco || []).slice()});
+  const r = () => ({mid: m.id, modo: x.destino.modo, texto: x.texto, idea: "", para: x.destino.para.slice(), cc: x.destino.cc.slice(), cco: (x.destino.cco || []).slice(), asuntoPropio: x.destino.asuntoPropio, asuntoModo: x.destino.asuntoModo});
   const cambiar = () => { const modo = x.destino.modo === "todos" ? "responder" : "todos"; x.destino = Object.assign({modo}, destinatariosIniciales(m, modo)); pintarDetalle(); };
   const falta = /\[FALTA/i.test(x.texto);
   const quedan = derivadosPendientes(x).length;
@@ -2196,6 +2207,20 @@ function asuntoSalida(m, modo) {
   const a = String((m && m.subject) || "").trim() || "(sin asunto)";
   return modo === "reenviar" ? (/^(rv|fw|fwd)\s*:/i.test(a) ? a : "RV: " + a) : (/^re\s*:/i.test(a) ? a : "RE: " + a);
 }
+// El asunto sale con «RE:» o «RV:» delante, y se puede cambiar. Si se cambia de modo (responder / reenviar) vuelve al de serie.
+function campoAsunto(d, pref, m) {
+  const deSerie = asuntoSalida(m, d.modo);
+  if (d.asuntoModo !== d.modo || d.asuntoPropio == null) { d.asuntoPropio = deSerie; d.asuntoModo = d.modo; }
+  const i = el("input", {type: "text", id: pref + "asunto", autocomplete: "off", "aria-label": "Asunto"});
+  i.value = d.asuntoPropio;
+  i.addEventListener("input", () => { d.asuntoPropio = i.value; });
+  return el("div", {class: "campo"}, el("span", {class: "campo-eti"}, "Asunto"), el("div", {class: "campo-caja"}, i));
+}
+// El asunto que ha escrito Francesc, solo si es distinto del que pone Outlook por su cuenta.
+function asuntoCambiado(d, m) {
+  const a = String(d.asuntoPropio == null ? "" : d.asuntoPropio).trim();
+  return a && a !== asuntoSalida(m, d.modo) ? a.slice(0, 250) : null;
+}
 function camposDestino(d, pref, m) {
   for (const [k] of CAMPOS) if (!Array.isArray(d[k])) d[k] = [];
   const repintar = (foco) => { pintarDetalle(); if (foco) { const c = $(pref + foco); if (c) c.focus(); } };
@@ -2267,7 +2292,7 @@ function camposDestino(d, pref, m) {
     return el("div", {class: "campo"}, el("span", {class: "campo-eti"}, etiqueta), el("div", {class: "campo-caja"}, zona, lista));
   };
   return el("div", {class: "destinos"}, ...CAMPOS.map(fila),
-    m ? el("div", {class: "campo"}, el("span", {class: "campo-eti"}, "Asunto"), el("div", {class: "campo-caja asunto-salida"}, asuntoSalida(m, d.modo))) : null);
+    m ? campoAsunto(d, pref, m) : null);
 }
 // Outlook crea el mensaje (con el hilo y, al reenviar, los adjuntos) y se envía a quien haya quedado elegido.
 async function enviarManual(m, r, archivarDespues) {
@@ -2278,9 +2303,13 @@ async function enviarManual(m, r, archivarDespues) {
   if (!r.para.concat(r.cc, r.cco || []).every((x) => CORREO.test(x))) throw new Error("revisa las direcciones");
   const nuevo = await api("POST", `/me/messages/${id(m.id)}/${MODOS[r.modo][0]}`, undefined, "html");
   const aLista = (l) => l.map((x) => ({emailAddress: {address: x}}));
-  await api("PATCH", `/me/messages/${id(nuevo.id)}`, {
+  const cambio = {
     body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(r.texto))},
-    toRecipients: aLista(r.para), ccRecipients: aLista(r.cc), bccRecipients: aLista(r.cco || [])});
+    toRecipients: aLista(r.para), ccRecipients: aLista(r.cc), bccRecipients: aLista(r.cco || [])};
+  const asunto = asuntoCambiado(r, m);
+  if (asunto) cambio.subject = asunto;
+  await api("PATCH", `/me/messages/${id(nuevo.id)}`, cambio);
+  await subirAdjuntos(nuevo.id, r.adjuntos);
   await api("POST", `/me/messages/${id(nuevo.id)}/send`);
   if (estado.redacta && estado.redacta.mid === m.id) estado.redacta = null;
   const quedan = derivadosPendientes(estado.propuestas[m.id]);
@@ -2330,6 +2359,7 @@ function panelManual(m) {
       el("button", {class: "lleno corto", type: "button", onclick: redactar}, r.texto.trim() ? "Mejorar con IA" : "Redactar con IA"),
       r.modo !== "reenviar" ? el("button", {class: "plano corto", type: "button", onclick: () => { estado.redacta = null; pedirTest(m, r.texto, r); }}, "Afinar con preguntas") : null) : activarIA(),
     area,
+    zonaAdjuntos(r),
     /\[FALTA/i.test(r.texto) ? el("span", {class: "aviso"}, "Completa los huecos [FALTA: …] para poder enviar") : null,
     el("div", {class: "fila"},
       el("button", {class: "plano", type: "button", onclick: () => hacer(() => enviarManual(m, r, false), [], "Enviado")}, "Enviar"),
@@ -2359,6 +2389,9 @@ function pintarDetalle() {
   const taller = document.createElement("div");
   construirDetalle(taller);
   sincronizar($("detalle"), Array.from(taller.childNodes));
+  // La hoja de redacción no se rehace mientras se está escribiendo en ella (se perdería el cursor).
+  const foco = document.activeElement;
+  if (estado.hoja && !(foco && ["hoja-texto", "hoja-asunto", "hoja-idea"].includes(foco.id))) pintarHoja();
 }
 function construirDetalle(d) {
   const m = todos().find((x) => x.id === estado.sel);
@@ -2386,6 +2419,8 @@ function construirDetalle(d) {
     panelManual(m),
     bloquePropuesta(m, esRespuesta),
     bloqueResumen(m, p, c),
+    !estado.propuestas[m.id] && !(estado.redacta && estado.redacta.mid === m.id) ? botonesDecision(m) : null,
+    bloqueCita(m),
     p.aviso ? el("span", {class: "aviso"}, (esRespuesta ? "Revisar bien: " : "") + p.aviso) : null,
     el("div", Object.assign({class: "carta correo"}, c && !c.error && c.html && !estado.soloTexto ? {"data-clave": `correo|${m.id}|${c.html.length}`} : {}),
       el("span", {class: "eti"}, "Correo", "ontouchstart" in window ? el("span", {class: "pista"}, " · pellizca o toca dos veces para ampliar") : null),
@@ -2427,7 +2462,7 @@ function construirDetalle(d) {
 function pintar() {
   const d = estado.datos;
   const g = grupos();
-  const n = {busca: d.busca.length, nuevo: d.nuevo.length, resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length};
+  const n = {busca: d.busca.length, nuevo: d.nuevo.length, resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length, espera: (estado.espera || []).length};
   // Mientras se lee el buzón no se dice «nada pendiente», y mientras quedan cambios por guardar se avisa.
   $("resumen").textContent = enProceso.size ? `Guardando ${enProceso.size} ${enProceso.size === 1 ? "cambio" : "cambios"} en Outlook… no cierres ni recargues`
     : !estado.cargado ? "Leyendo tu bandeja…"
@@ -2444,7 +2479,10 @@ function pintar() {
         el("button", {class: "plano corto", type: "button", onclick: () => hacer(() => guardarLista(estado.lista.filter((x) => x !== d)), [], "Quitado de la lista")}, "Quitar")))));
   }
   else if (estado.tab === "busca") cartas = [panelBusqueda()].concat(panelFuera(), d.busca.map(cartaBusqueda), !d.busca.length && estado.buscado && !estado.buscando ? [el("p", {class: "pide"}, "No hay correos archivados con ese asunto o remitente.")] : []);
+  else if (estado.tab === "espera") { cartas = panelEspera(); if (estado.cargado) cargarEspera(); }
   else cartas = d[estado.tab].map(cartaSimple);
+  const dia = estado.tab !== "busca" && estado.tab !== "espera" ? resumenDelDia() : null;
+  if (dia) cartas.unshift(dia);
   if (estado.tab === "nuevo" && cartas.length) cartas.unshift(el("p", {class: "pide"}, leer("agente.ia") ? "Recién llegados. Se clasifican solos en unos segundos; puedes abrirlos ya." : "Recién llegados. El agente todavía no los ha clasificado; puedes abrirlos, contestarlos o archivarlos ya."));
   $("lista").replaceChildren(...(cartas.length ? cartas : [el("div", {class: "vacio"}, el("b", {}, "Nada pendiente aquí"), estado.tab === "nuevo" ? "No hay correos nuevos sin clasificar." : "La bandeja de entrada solo guarda lo que queda por resolver.")]));
   if (!estado.cargado && estado.tab !== "busca") $("lista").replaceChildren(el("div", {class: "vacio"}, el("b", {}, "Leyendo tu bandeja…"), "Un momento."));
@@ -2509,6 +2547,327 @@ function salir() {
   cerrar();
   pantallaInicio(false);
 }
+
+// =====================================================================================================
+// Adjuntar archivos, correo nuevo, «Esperando», decisiones de un toque, citas y resumen del día
+// =====================================================================================================
+
+// ---------- adjuntar archivos ----------
+// Se guardan solo en memoria hasta que se envía (no en el almacenamiento del navegador). Tope de Outlook
+// para adjuntos sencillos: 3 MB por archivo.
+const MAX_ADJUNTO = 3 * 1024 * 1024;
+const apkSinArchivos = () => !!window.agenteApk && !(Number(window.agenteApk.version) >= 4);
+function leerBase64(fichero) {
+  return new Promise((ok, no) => {
+    const l = new FileReader();
+    l.onload = () => ok(String(l.result).split(",")[1] || "");
+    l.onerror = () => no(new Error("no se ha podido leer " + fichero.name));
+    l.readAsDataURL(fichero);
+  });
+}
+function zonaAdjuntos(r) {
+  if (!Array.isArray(r.adjuntos)) r.adjuntos = [];
+  const selector = el("input", {type: "file", multiple: "", class: "oculto", "aria-hidden": "true", tabindex: "-1"});
+  selector.addEventListener("change", async () => {
+    const grandes = [];
+    for (const f of Array.from(selector.files || [])) {
+      if (f.size > MAX_ADJUNTO) { grandes.push(f.name); continue; }
+      if (r.adjuntos.length >= 10) break;
+      try { r.adjuntos.push({nombre: f.name, tipo: f.type || "application/octet-stream", peso: f.size, datos: await leerBase64(f)}); } catch (e) { avisar(e.message); }
+    }
+    selector.value = "";
+    if (grandes.length) avisar("Demasiado grande (más de 3 MB): " + grandes.join(", ") + ". Envíalo desde Outlook o como enlace de OneDrive.");
+    pintarDetalle();
+  });
+  const elegir = () => {
+    if (apkSinArchivos()) { avisar("Para adjuntar archivos desde la app instala la versión nueva (te la ofrece al abrirla)."); return; }
+    selector.click();
+  };
+  return el("div", {class: "adjuntar"},
+    selector,
+    el("button", {class: "plano corto", type: "button", onclick: elegir}, icono("clip"), r.adjuntos.length ? "Adjuntar otro" : "Adjuntar archivo"),
+    ...r.adjuntos.map((a, i) => el("span", {class: "adjunto-puesto"}, a.nombre + " · " + tamano(a.peso),
+      el("button", {class: "quitar", type: "button", "aria-label": "Quitar " + a.nombre, onclick: () => { r.adjuntos.splice(i, 1); pintarDetalle(); }}, "×"))));
+}
+async function subirAdjuntos(idBorrador, lista) {
+  for (const a of lista || []) {
+    await api("POST", `/me/messages/${id(idBorrador)}/attachments`, {"@odata.type": "#microsoft.graph.fileAttachment", name: a.nombre, contentType: a.tipo, contentBytes: a.datos});
+  }
+}
+
+// ---------- hoja de redacción: correo nuevo y recordatorios ----------
+// h.responderA: id de un correo tuyo de Enviados; entonces sale como respuesta en esa conversación.
+function abrirHoja(h) {
+  estado.hoja = Object.assign({para: [], cc: [], cco: [], asunto: "", texto: "", idea: "", adjuntos: [], titulo: "Correo nuevo"}, h);
+  cargarContactos().catch(() => {});
+  if (!history.state || !history.state.hoja) history.pushState({hoja: true}, "");
+  pintarHoja();
+}
+function cerrarHoja(desdeAtras) {
+  if (!estado.hoja) return;
+  estado.hoja = null;
+  const n = $("hoja");
+  if (n) n.remove();
+  if (desdeAtras !== true && history.state && history.state.hoja) history.back();
+}
+window.addEventListener("popstate", () => cerrarHoja(true));
+async function redactarHoja(h) {
+  const sistema = `Redactas correos en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él los revise y los envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\n${AVISO_DESTINO}\n${h.contexto ? "Es un RECORDATORIO de un correo que Francesc envió y que no ha tenido respuesta: breve, correcto, sin reproches, recordando qué pidió y, si procede, para cuándo lo necesita. No repitas el correo entero." : "Es un correo NUEVO, no una respuesta."} Si te faltan datos que puedan estar en su correo (una dirección, un precio, una referencia, lo último que se habló), búscalos. No inventes datos, importes, fechas ni compromisos: si falta algo que solo Francesc sabe, escribe [FALTA: qué]. Devuelve SOLO un JSON: {"asunto": "…", "texto": "…"${h.responderA ? "" : ', "para": ["direcciones que hayas encontrado en su correo para los destinatarios que él nombra; vacío si no las encuentras o ya están puestas"]'}}. "asunto": corto y concreto${h.responderA ? " (déjalo vacío: se mantiene el de la conversación)" : ""}. "texto": el correo completo, sin firma. Sin markdown y sin nada fuera del JSON.`;
+  const usuario = `Destinatarios ya puestos: ${h.para.concat(h.cc).join(", ") || "(ninguno)"}\nAsunto ya escrito: ${h.asunto || "(ninguno)"}\n\nLo que Francesc quiere decir: ${h.idea.trim() || (h.contexto ? "(recuérdaselo con educación)" : "(no lo ha indicado)")}\n${h.texto.trim() ? "\nBorrador de Francesc (mejóralo sin cambiar el fondo):\n" + h.texto.trim() + "\n" : ""}${h.contexto ? "\nCorreo que envió y sigue sin respuesta:\n" + h.contexto : ""}`;
+  const res = await ia(sistema, usuario, 4000, null, true);
+  const k = /\{[\s\S]*\}/.exec(res.texto);
+  let j = null;
+  try { j = k ? JSON.parse(k[0]) : null; } catch (e) { j = null; }
+  if (!j || !String(j.texto || "").trim()) { h.texto = res.texto.trim(); return res.modelo; }
+  h.texto = String(j.texto).trim();
+  if (!h.responderA && !h.asunto.trim() && j.asunto) h.asunto = String(j.asunto).trim().slice(0, 250);
+  if (!h.responderA && Array.isArray(j.para)) for (const a of j.para.map((x) => String(x || "").trim()).filter((x) => CORREO.test(x)).slice(0, 5)) {
+    if (!h.para.concat(h.cc, h.cco).some((y) => y.toLowerCase() === a.toLowerCase())) { h.para.push(a); h.propuestos = (h.propuestos || []).concat(a); }
+  }
+  return res.modelo;
+}
+async function enviarHoja(h) {
+  if (!h.texto.trim()) throw new Error("escribe el mensaje antes de enviar");
+  if (/\[FALTA/i.test(h.texto)) throw new Error("completa los huecos [FALTA: …]");
+  if (!h.para.length) throw new Error("pon al menos un destinatario en «Para»");
+  if (!h.para.concat(h.cc, h.cco).every((x) => CORREO.test(x))) throw new Error("revisa las direcciones");
+  if (!h.responderA && !h.asunto.trim()) throw new Error("pon un asunto");
+  const aLista = (l) => l.map((x) => ({emailAddress: {address: x}}));
+  const quien = {toRecipients: aLista(h.para), ccRecipients: aLista(h.cc), bccRecipients: aLista(h.cco)};
+  let nuevo;
+  if (h.responderA) {
+    nuevo = await api("POST", `/me/messages/${id(h.responderA)}/createReplyAll`, undefined, "html");
+    const cambio = Object.assign({body: {contentType: "html", content: insertarEnCuerpo((nuevo.body || {}).content || "", await conFirma(h.texto))}}, quien);
+    if (h.asunto.trim() && h.asunto.trim() !== h.asuntoDeSerie) cambio.subject = h.asunto.trim().slice(0, 250);
+    await api("PATCH", `/me/messages/${id(nuevo.id)}`, cambio);
+  } else {
+    nuevo = await api("POST", "/me/messages", Object.assign({subject: h.asunto.trim().slice(0, 250), body: {contentType: "html", content: await conFirma(h.texto)}}, quien));
+  }
+  await subirAdjuntos(nuevo.id, h.adjuntos);
+  await api("POST", `/me/messages/${id(nuevo.id)}/send`);
+  if (h.esperaId) { estado.espera = (estado.espera || []).filter((e) => e.id !== h.esperaId); estado.hilosMios = null; }
+  cerrarHoja();
+  pintar();
+}
+function pintarHoja() {
+  const h = estado.hoja;
+  if (!h) return;
+  let n = $("hoja");
+  if (!n) { n = el("div", {id: "hoja", class: "hoja", role: "dialog", "aria-label": h.titulo}); document.body.append(n); }
+  const hayIA = !!leer("agente.ia");
+  const area = el("textarea", {id: "hoja-texto", "aria-label": "Texto del mensaje"});
+  area.value = h.texto;
+  area.addEventListener("input", () => { h.texto = area.value; });
+  const asunto = el("input", {type: "text", id: "hoja-asunto", autocomplete: "off", "aria-label": "Asunto"});
+  asunto.value = h.asunto;
+  asunto.addEventListener("input", () => { h.asunto = asunto.value; });
+  const idea = el("input", {type: "text", id: "hoja-idea", autocomplete: "off", placeholder: h.contexto ? "Ej.: que lo necesito antes del viernes" : "Ej.: pídele a Marc el modelo 232 firmado para el lunes"});
+  idea.value = h.idea;
+  idea.addEventListener("input", () => { h.idea = idea.value; });
+  const redactar = () => { avisar("La IA está escribiendo…"); hacer(async () => { const modelo = await redactarHoja(h); avisar("Redactado con " + modelo + ". Revísalo antes de enviar."); }, [], null); };
+  idea.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); redactar(); } });
+  const propio = ((estado.yo || "").split("@")[1] || "").toLowerCase();
+  const fuera = propio ? h.para.concat(h.cc, h.cco).filter((a) => (a.split("@")[1] || "").toLowerCase() !== propio) : [];
+  n.replaceChildren(el("div", {class: "hoja-dentro"},
+    el("button", {class: "plano izquierda", type: "button", onclick: () => cerrarHoja()}, "‹ Cancelar"),
+    el("div", {class: "carta redaccion"},
+      el("span", {class: "eti"}, h.titulo),
+      h.nota ? el("p", {class: "pide normal"}, h.nota) : null,
+      camposDestino(h, "hoja-", null),
+      el("div", {class: "campo"}, el("span", {class: "campo-eti"}, "Asunto"), el("div", {class: "campo-caja"}, asunto)),
+      (h.propuestos || []).length ? el("span", {class: "aviso"}, "La IA ha añadido en «Para» a " + h.propuestos.join(", ") + ". Comprueba que es quien debe recibirlo.") : null,
+      fuera.length && !(h.propuestos || []).length ? el("span", {class: "pide"}, "Fuera de la empresa: " + fuera.join(", ")) : null,
+      hayIA ? el("div", {class: "ia"},
+        el("label", {}, h.contexto ? "Dile a la IA qué quieres recordarle" : "Dile a la IA qué quieres decir y a quién", idea),
+        el("button", {class: "lleno corto", type: "button", onclick: redactar}, h.texto.trim() ? "Mejorar con IA" : "Redactar con IA")) : activarIA(),
+      area,
+      zonaAdjuntos(h),
+      /\[FALTA/i.test(h.texto) ? el("span", {class: "aviso"}, "Completa los huecos [FALTA: …] para poder enviar") : null,
+      el("div", {class: "fila"},
+        el("button", {class: "plano", type: "button", onclick: () => cerrarHoja()}, "Cancelar"),
+        el("button", {class: "lleno", type: "button", onclick: () => hacer(() => enviarHoja(h), [], h.contexto ? "Recordatorio enviado" : "Correo enviado")}, "Enviar")),
+      vistaFirma())));
+}
+
+// ---------- «Esperando»: lo que enviaste y nadie ha contestado ----------
+const ESPERA_DIAS = 2, ESPERA_TOPE = 30;
+const noEspero = () => new Set(leer("agente.noespero") || []);
+async function cargarEspera(forzar) {
+  if (estado.esperaCargando) return;
+  if (!forzar && estado.esperaHora && Date.now() - estado.esperaHora < 10 * 60000) return;
+  estado.esperaCargando = true;
+  if (estado.tab === "espera") pintar();
+  try {
+    const desde = new Date(Date.now() - (ESPERA_TOPE + 5) * 864e5).toISOString();
+    const yo = (estado.yo || "").toLowerCase();
+    const [env, rec] = await Promise.all([
+      api("GET", "/me/mailFolders/sentitems/messages?" + new URLSearchParams({"$filter": `sentDateTime ge ${desde}`, "$select": "id,subject,toRecipients,ccRecipients,sentDateTime,conversationId,bodyPreview,webLink", "$orderby": "sentDateTime desc", "$top": "250"})),
+      (async () => {
+        // Lo recibido en ese tiempo, en cualquier carpeta: solo hace falta saber en qué conversación y cuándo.
+        const lista = [];
+        let ruta = "/me/messages?" + new URLSearchParams({"$filter": `receivedDateTime ge ${desde}`, "$select": "conversationId,receivedDateTime,from,isDraft", "$orderby": "receivedDateTime desc", "$top": "500"});
+        for (let vuelta = 0; vuelta < 4 && ruta; vuelta++) {
+          const j = await api("GET", ruta);
+          lista.push(...(j.value || []));
+          const sig = j["@odata.nextLink"];
+          ruta = sig ? sig.replace("https://graph.microsoft.com/v1.0", "") : null;
+        }
+        return lista;
+      })()]);
+    const ultimaAjena = {};
+    for (const c of rec) {
+      const de0 = String(((c.from || {}).emailAddress || {}).address || "").toLowerCase();
+      if (c.isDraft || !c.conversationId || !de0 || de0 === yo) continue;
+      if (!ultimaAjena[c.conversationId] || c.receivedDateTime > ultimaAjena[c.conversationId]) ultimaAjena[c.conversationId] = c.receivedDateTime;
+    }
+    const visto = new Set(), fuera = noEspero(), ahora = Date.now(), lista = [];
+    for (const e of env.value || []) {   // del más reciente al más antiguo: solo cuenta tu último envío de cada hilo
+      if (!e.conversationId || visto.has(e.conversationId)) continue;
+      visto.add(e.conversationId);
+      if (fuera.has(e.id)) continue;
+      const dias = (ahora - Date.parse(e.sentDateTime)) / 864e5;
+      if (dias < ESPERA_DIAS || dias > ESPERA_TOPE) continue;
+      if ((ultimaAjena[e.conversationId] || "") > e.sentDateTime) continue;       // ya te contestaron
+      const dirs = (e.toRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()).filter((a) => CORREO.test(a));
+      if (!dirs.length || dirs.every((a) => a.toLowerCase() === yo)) continue;
+      const texto = limpiarMio(e.bodyPreview || "");
+      // Un «gracias» o un «ok» no espera respuesta: fuera. Una pregunta o una petición, arriba.
+      if (texto.length < 25 && !/\?/.test(texto)) continue;
+      const pide = /\?|\b(confirm|dime|dim'|digues|avisa|puedes|podr[ií]as|pots|podeu|necesito|necessito|env[ií]a|pasa|passa|please|could you|let me know|quedo a la espera|espero)/i.test(texto);
+      lista.push({id: e.id, asunto: e.subject || "(sin asunto)", para: (e.toRecipients || []).map((t) => (t.emailAddress || {}).name || (t.emailAddress || {}).address || "").filter(Boolean), dirs,
+        cc: (e.ccRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()).filter((a) => CORREO.test(a) && a.toLowerCase() !== yo),
+        fecha: e.sentDateTime, dias: Math.floor(dias), texto, pide, enlace: e.webLink || ""});
+    }
+    estado.espera = lista.sort((a, b) => Number(b.pide) - Number(a.pide) || a.fecha.localeCompare(b.fecha));
+    estado.esperaHora = Date.now();
+  } catch (e) { avisar("No se ha podido leer lo enviado: " + e.message); }
+  estado.esperaCargando = false;
+  pintar();
+}
+async function recordar(e) {
+  // Se lee tu correo entero para que la IA sepa qué pediste; el recordatorio sale en esa misma conversación.
+  let cuerpo = e.texto;
+  try { const c = await api("GET", `/me/messages/${id(e.id)}?$select=uniqueBody,body`); cuerpo = limpiarMio(((c.uniqueBody || {}).content) || ((c.body || {}).content) || e.texto).slice(0, 4000); } catch (err) {}
+  const h = {titulo: "Recordatorio", nota: "Sale como respuesta a tu correo del " + fechaHora(e.fecha) + " («" + e.asunto + "»), a las mismas personas.",
+    responderA: e.id, esperaId: e.id, para: e.dirs.slice(), cc: e.cc.slice(), asunto: asuntoSalida({subject: e.asunto}, "responder"),
+    contexto: `Enviado el ${fechaHora(e.fecha)} (hace ${e.dias} días) a ${e.para.join(", ")}\nAsunto: ${e.asunto}\n\n${cuerpo}`};
+  h.asuntoDeSerie = h.asunto;
+  abrirHoja(h);
+  if (leer("agente.ia")) { avisar("La IA está escribiendo…"); hacer(async () => { const modelo = await redactarHoja(estado.hoja); avisar("Redactado con " + modelo + ". Revísalo antes de enviar."); }, [], null); }
+}
+function cartaEspera(e) {
+  const abrir0 = e.enlace ? enlaceSeguro(e.enlace) : null;
+  return el("div", {class: "carta espera" + (e.pide ? " pide-algo" : "")},
+    el("div", {class: "de"}, el("b", {}, "Para " + e.para.slice(0, 3).join(", ") + (e.para.length > 3 ? " y " + (e.para.length - 3) + " más" : ""))),
+    el("div", {class: "asunto"}, e.asunto),
+    el("span", {class: "marca " + (e.dias >= 5 ? "cola" : "hecho")}, "Sin respuesta desde hace " + e.dias + " días"),
+    e.pide ? el("span", {class: "marca cola"}, "Pedías algo") : null,
+    el("p", {class: "pide"}, e.texto.slice(0, 220)),
+    el("div", {class: "fila"},
+      abrir0 ? el("a", {class: "plano", href: abrir0, target: "_blank", rel: "noopener noreferrer"}, "Abrir en Outlook") : null,
+      el("button", {class: "plano", type: "button", onclick: () => { guardar("agente.noespero", Array.from(noEspero()).concat(e.id).slice(-400)); estado.espera = estado.espera.filter((x) => x.id !== e.id); pintar(); }}, "No espero respuesta"),
+      el("button", {class: "lleno", type: "button", onclick: () => recordar(e)}, "Recordárselo")));
+}
+function panelEspera() {
+  if (estado.esperaCargando && !estado.espera) return [el("div", {class: "vacio"}, el("b", {}, "Mirando lo que has enviado…"), "Un momento.")];
+  const lista = estado.espera || [];
+  const cabeza = el("p", {class: "pide"}, lista.length ? `Correos tuyos de los últimos ${ESPERA_TOPE} días que llevan más de ${ESPERA_DIAS} sin respuesta. Arriba, los que pedían algo.` : "");
+  return lista.length ? [cabeza].concat(lista.map(cartaEspera)) : [el("div", {class: "vacio"}, el("b", {}, "Nadie te debe respuesta"), `No hay correos tuyos de más de ${ESPERA_DIAS} días sin contestar.`)];
+}
+
+// ---------- decisión de un toque ----------
+function botonesDecision(m) {
+  const op = prop(m).opciones;
+  if (!Array.isArray(op) || op.length < 2 || !leer("agente.ia")) return null;
+  return el("div", {class: "decision"},
+    el("span", {class: "eti"}, "Decide con un toque y la IA redacta la respuesta"),
+    el("div", {class: "fila"}, ...op.slice(0, 4).map((o) => el("button", {class: "plano", type: "button", onclick: () =>
+      pedirPropuesta(m, `Decisión de Francesc, elegida con un toque: «${o}». Redacta la respuesta completa con esa decisión, en su estilo, sin preguntarle nada más salvo que falte un dato imprescindible.`)}, o))));
+}
+
+// ---------- cita detectada: al calendario ----------
+const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"], DIAS_CORTOS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+function partesCita(t) {
+  const k = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(String(t || "").trim());
+  return k ? {a: +k[1], m: +k[2], d: +k[3], h: k[4] == null ? null : +k[4], mi: k[5] == null ? null : +k[5]} : null;
+}
+function textoCita(c) {
+  const i = partesCita(c.inicio), f = partesCita(c.fin);
+  if (!i) return "";
+  const dia = DIAS_CORTOS[new Date(Date.UTC(i.a, i.m - 1, i.d)).getUTCDay()] + " " + i.d + " " + MESES_CORTOS[i.m - 1] + (i.a !== new Date().getFullYear() ? " " + i.a : "");
+  const hora = (p) => String(p.h).padStart(2, "0") + ":" + String(p.mi).padStart(2, "0");
+  return dia + (i.h == null ? "" : ", " + hora(i) + (f && f.h != null && f.d === i.d ? "–" + hora(f) : "")) + (c.lugar ? " · " + c.lugar : "");
+}
+// Fichero de calendario (.ics): lo abre la agenda del móvil o del ordenador, con la hora de España.
+function ficheroCita(m, c) {
+  const i = partesCita(c.inicio);
+  if (!i) return null;
+  let f = partesCita(c.fin);
+  const dos = (n) => String(n).padStart(2, "0");
+  const esc = (t) => String(t || "").replace(/\\/g, "\\\\").replace(/[,;]/g, (x) => "\\" + x).replace(/\r?\n/g, "\\n");
+  const sello = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+  const lineas = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Grup PAMPOLS//Agente de correo//ES", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "BEGIN:VEVENT",
+    "UID:" + sello + "-" + Math.random().toString(36).slice(2, 10) + "@agente-correo", "DTSTAMP:" + sello];
+  if (i.h == null) {
+    const sig = new Date(Date.UTC(i.a, i.m - 1, i.d + 1));
+    lineas.push(`DTSTART;VALUE=DATE:${i.a}${dos(i.m)}${dos(i.d)}`, `DTEND;VALUE=DATE:${sig.getUTCFullYear()}${dos(sig.getUTCMonth() + 1)}${dos(sig.getUTCDate())}`);
+  } else {
+    if (!f || f.h == null) { const fin = new Date(Date.UTC(i.a, i.m - 1, i.d, i.h + 1, i.mi)); f = {a: fin.getUTCFullYear(), m: fin.getUTCMonth() + 1, d: fin.getUTCDate(), h: fin.getUTCHours(), mi: fin.getUTCMinutes()}; }
+    const marca = (p) => `${p.a}${dos(p.m)}${dos(p.d)}T${dos(p.h)}${dos(p.mi)}00`;
+    lineas.push("DTSTART;TZID=Europe/Madrid:" + marca(i), "DTEND;TZID=Europe/Madrid:" + marca(f));
+  }
+  lineas.push("SUMMARY:" + esc(c.titulo || m.subject || "Cita"));
+  if (c.lugar) lineas.push("LOCATION:" + esc(c.lugar));
+  lineas.push("DESCRIPTION:" + esc("Del correo de " + de(m) + ": " + (m.subject || "")), "END:VEVENT", "END:VCALENDAR");
+  return new File([lineas.join("\r\n") + "\r\n"], "cita.ics", {type: "text/calendar"});
+}
+async function alCalendario(m) {
+  const fichero = ficheroCita(m, prop(m).cita);
+  if (!fichero) { avisar("No se ha podido preparar la cita"); return; }
+  if (window.agenteApk && window.agenteAndroid && typeof window.agenteAndroid.postMessage === "function") {
+    window.agenteAndroid.postMessage(JSON.stringify({tipo: "fichero", nombre: "cita.ics", mime: "text/calendar", datos: await leerBase64(fichero)}));
+    avisar("Elige tu calendario para guardar la cita");
+  } else { guardarFichero(fichero, "cita.ics"); avisar("Abre «cita.ics» para añadirla a tu calendario"); }
+}
+function bloqueCita(m) {
+  const c = prop(m).cita;
+  if (!c || !partesCita(c.inicio)) return null;
+  return el("div", {class: "cita"},
+    el("span", {class: "eti"}, "Fecha detectada"),
+    el("p", {class: "pide normal"}, (c.titulo ? c.titulo + " · " : "") + textoCita(c)),
+    el("button", {class: "plano corto", type: "button", onclick: () => alCalendario(m)}, "Añadir al calendario"));
+}
+
+// ---------- resumen del día ----------
+// Sale la primera vez que abres la app cada día. Se compone con lo que el agente ya ha leído: no gasta IA.
+const hoyClave = () => { const d = new Date(); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); };
+function lineaFicha(m, etiqueta) {
+  const l = lineasResumen(prop(m).resumen).find((x) => new RegExp("^" + etiqueta + "\\s*:", "i").test(x));
+  return l ? l.replace(/^[^:]+:\s*/, "") : "";
+}
+function resumenDelDia() {
+  if (!estado.cargado || (leer("agente.dia") === hoyClave() && !estado.diaVisible)) return null;
+  const d = estado.datos, vivos = d.resp.concat(d.pend, d.nuevo);
+  const ayer = new Date(); ayer.setHours(0, 0, 0, 0); ayer.setDate(ayer.getDate() - 1);
+  const nuevos = todos().filter((m) => !m.archivado && Date.parse(m.receivedDateTime || 0) >= ayer.getTime());
+  const conPlazo = vivos.filter((m) => lineaFicha(m, "Plazo")).slice(0, 4);
+  const deTi = vivos.filter((m) => lineaFicha(m, "De ti") && !respondido(m) && !conPlazo.includes(m)).slice(0, 4);
+  const citas = vivos.filter((m) => prop(m).cita && partesCita(prop(m).cita.inicio)).slice(0, 3);
+  const matices = vivos.filter((m) => matices0(m)).length;
+  const fila = (m, texto) => el("button", {class: "dia-linea", type: "button", onclick: () => abrir(m.id)}, el("b", {}, de(m).split(" - ")[0].slice(0, 28)), el("span", {}, " " + texto.slice(0, 150)));
+  const bloque = (titulo, filas) => filas.length ? [el("span", {class: "eti"}, titulo)].concat(filas) : [];
+  const cerrar0 = () => { guardar("agente.dia", hoyClave()); estado.diaVisible = false; pintar(); };
+  const espera = (estado.espera || []).length;
+  return el("div", {class: "carta dia"},
+    el("span", {class: "eti grande"}, "Hoy, " + DIAS_CORTOS[new Date().getDay()] + " " + new Date().getDate() + " de " + MESES_CORTOS[new Date().getMonth()]),
+    el("p", {class: "pide normal"}, `${nuevos.length} ${nuevos.length === 1 ? "correo nuevo" : "correos nuevos"} desde ayer · ${d.resp.length + d.pend.length} pendientes de ti · ${d.arch.length + d.news.length} para archivar` + (matices ? ` · ${matices} con matices` : "")),
+    ...bloque("Con plazo", conPlazo.map((m) => fila(m, lineaFicha(m, "Plazo")))),
+    ...bloque("Esperan una decisión tuya", deTi.map((m) => fila(m, lineaFicha(m, "De ti")))),
+    ...bloque("Fechas", citas.map((m) => fila(m, (prop(m).cita.titulo || m.subject || "") + " · " + textoCita(prop(m).cita)))),
+    estado.espera ? el("button", {class: "dia-linea", type: "button", onclick: () => { estado.tab = "espera"; cerrar0(); }}, el("b", {}, "Esperando"), el("span", {}, espera ? ` ${espera} ${espera === 1 ? "correo tuyo sigue" : "correos tuyos siguen"} sin respuesta` : " nadie te debe respuesta")) : null,
+    !conPlazo.length && !deTi.length && !citas.length ? el("p", {class: "pide"}, "Nada con plazo ni decisiones pendientes entre lo que el agente ha leído.") : null,
+    el("div", {class: "fila"}, el("button", {class: "plano corto", type: "button", onclick: cerrar0}, "Entendido")));
+}
 async function arrancar() {
   prepararCopia();
   const q = new URLSearchParams(location.search);
@@ -2525,7 +2884,8 @@ async function arrancar() {
   }
   if (leer("agente.salio")) { pantallaInicio(false); return; }
   $("app").classList.remove("oculto");
-  $("recargar").onclick = cargar;
+  $("recargar").onclick = () => { estado.esperaHora = 0; cargar(); };
+  if ($("nuevo")) $("nuevo").onclick = () => abrirHoja({});
   $("salir").onclick = salir;
   const abierto = recuperarTrabajo();
   const habia = recuperarBandeja();
@@ -2536,7 +2896,7 @@ async function arrancar() {
   if (!habia) { if (abierto && todos().some((m) => m.id === abierto)) abrir(abierto); volverAlLugar(); }
   // Se pone al día sola cada minuto y, además, en cuanto vuelves a la app desde Outlook u otra pestaña.
   let ultima = Date.now();
-  const alDia = (minimo) => { if (!document.hidden && !estado.sel && !leer("agente.salio") && Date.now() - ultima > minimo) { ultima = Date.now(); cargar(); } };
+  const alDia = (minimo) => { if (!document.hidden && !estado.sel && !estado.hoja && !leer("agente.salio") && Date.now() - ultima > minimo) { ultima = Date.now(); cargar(); } };
   setInterval(() => alDia(55000), 60000);
   document.addEventListener("visibilitychange", () => { alDia(8000); if (!document.hidden) mirarVersion(); });
   setInterval(mirarVersion, 180000);

@@ -319,3 +319,23 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 
 .toca{cursor:pointer}
 .aviso.hilo{background:#E3EEF9;color:#1B4F85}
+
+/* ---- hoja de redacción, esperando, decisiones, citas, resumen del día ---- */
+.hoja{position:fixed;inset:0;z-index:40;background:var(--fondo,#E8EBF0);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.hoja-dentro{max-width:900px;margin:0 auto;padding:calc(14px + env(safe-area-inset-top)) 14px calc(90px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:12px}
+.hoja textarea{min-height:220px}
+.campo-caja input[type=text]{width:100%;border:0;background:transparent;padding:8px 6px;font:inherit;color:inherit;min-width:0}
+.campo-caja input[type=text]:focus{outline:2px solid var(--kraft,#C2935A);outline-offset:2px;border-radius:6px}
+.adjuntar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.adjuntar .plano{display:inline-flex;align-items:center;gap:6px}
+.adjunto-puesto{display:inline-flex;align-items:center;gap:6px;padding:6px 6px 6px 12px;border-radius:999px;background:#E6F1EA;color:#1E5B38;font-size:.92em;overflow-wrap:anywhere}
+.adjunto-puesto .quitar{border:0;background:transparent;color:inherit;font-size:1.2em;line-height:1;min-width:32px;min-height:32px;cursor:pointer}
+.espera.pide-algo{border-left:5px solid #C2935A}
+.decision{border:1px solid #CBD3DC;border-left:5px solid #1B66A8;border-radius:10px;padding:12px 14px;background:#fff;display:flex;flex-direction:column;gap:8px}
+.decision .fila .plano{flex:1 1 150px}
+.cita{border:1px dashed #9FB3C8;border-radius:10px;padding:10px 14px;background:#F4F8FC;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.cita .pide{margin:0;flex:1 1 220px}
+.dia{border-top:4px solid #13345B}
+.dia .eti.grande{font-size:1.15em;color:#13345B}
+.dia-linea{display:block;width:100%;text-align:left;border:0;background:transparent;padding:8px 0;border-top:1px solid #E3E8EE;font:inherit;color:inherit;cursor:pointer;overflow-wrap:anywhere}
+.dia-linea b{font-weight:600;color:#13345B}
