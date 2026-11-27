@@ -27,7 +27,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=102".slice(2));
+const VERSION = Number("v=103".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -815,7 +815,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=102"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=103"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -1024,8 +1024,23 @@ function botonLeido(m) {
 function bloqueResumen(m, p, c) {
   const largo = estado.resumenes[m.id];
   const pedir = () => { avisar("La IA está leyendo el correo…"); hacer(() => resumirIA(m), [], null); };
+  // De entrada va plegado: una línea con lo que se espera de Francesc y, si los hay, el aviso de matices. Se despliega a mano.
+  estado.resumenVisto = estado.resumenVisto || {};
+  const hay = largo || lineasResumen(p.resumen).length || p.pide;
+  const abierto = !hay || estado.resumenVisto[m.id] === true || (largo && estado.resumenVisto[m.id] !== false);
+  const alternar = el("button", {class: "enlace", type: "button", "aria-expanded": String(!!abierto), onclick: () => { estado.resumenVisto[m.id] = !abierto; pintarDetalle(); }}, abierto ? "Plegar" : "Ver el resumen");
+  if (!abierto) {
+    const lineas = lineasResumen(p.resumen);
+    const deTi = lineas.map((l) => /^De ti\s*:\s*(.+)$/i.exec(l)).filter(Boolean)[0];
+    const clave = largo ? "" : deTi ? deTi[1] : p.pide || (lineas[0] || "").replace(/^[^:]{2,10}:\s*/, "");
+    const n = largo ? 0 : matices(m);
+    return el("div", {class: "nota plegada"},
+      el("div", {class: "fila-eti"}, el("span", {class: "eti"}, largo ? "Resumen de la IA" : "Resumen del agente"), alternar),
+      clave ? el("p", {class: "pide normal toca", onclick: () => { estado.resumenVisto[m.id] = true; pintarDetalle(); }}, clave.slice(0, 220)) : null,
+      n ? el("span", {class: "aviso"}, (n === 1 ? "Tiene 1 matiz" : "Tiene " + n + " matices") + ": despliega el resumen o lee el correo entero.") : null);
+  }
   return el("div", {class: "nota"},
-    el("span", {class: "eti"}, largo ? "Resumen de la IA (" + largo.modelo + ")" : "Resumen del agente"),
+    el("div", {class: "fila-eti"}, el("span", {class: "eti"}, largo ? "Resumen de la IA (" + largo.modelo + ")" : "Resumen del agente"), hay ? alternar : null),
     largo ? el("div", {class: "resumen"}, ...largo.texto.split(/\n+/).filter((l) => l.trim()).map((l) => {
         const k = /^(Te piden|Puntos|Decide)\s*:\s*(.*)$/i.exec(l.trim());
         return k ? el("p", {class: "pide normal"}, el("b", {}, k[1] + ": "), k[2]) : el("p", {class: "pide normal"}, l.trim());

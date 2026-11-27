@@ -349,3 +349,5 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .hilo-estado details{display:flex;flex-direction:column;gap:8px}
 .hilo-estado summary{cursor:pointer;color:var(--azul,#1B5FA8);padding:6px 0}
 .hilo-estado details .paso-hilo{margin-top:8px}
+.fila-eti{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.nota.plegada{gap:6px}
