@@ -27,7 +27,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=99".slice(2));
+const VERSION = Number("v=100".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -815,7 +815,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=99"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=100"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -2857,7 +2857,7 @@ const ESPERA_DIAS = 2, ESPERA_TOPE = 30;
 const noEspero = () => new Set(leer("agente.noespero") || []);
 // «Pedías respuesta»: hay una pregunta, le pides que conteste o le haces una propuesta. Una instrucción («cancela esto») no cuenta.
 function pideRespuesta(texto) {
-  return /\?/.test(texto) || /\b(conf[ií]rma|dime\b|decidme|digues|digue'm|digueu|av[ií]sa|quedo a la espera|a la espera de|espero (tu|vuestra|su|tus|vuestros|la teva|la vostra|resp|noticias|not[ií]cies|comentarios)|ya me dices|ya me dir[aá]s|ya me cuentas|ja em dius|ja em dir[aà]s|c[oó]mo lo ves|com ho veus|qu[eé] te parece|qu[eé] os parece|te propongo|os propongo|et proposo|us proposo|te pido|os pido|necesito que|necessito que|me gustar[ií]a que|podr[ií]as|podr[ií]ais|podries|let me know|please confirm|get back to me|look forward to|what do you think)/i.test(texto);
+  return /\?/.test(texto) || /\b(conf[ií]rma|dime\b|decidme|digues|digue'm|digueu|av[ií]sa|quedo a la espera|a la espera de|espero (tu|vuestra|su|tus|vuestros|la teva|la vostra|resp|noticias|not[ií]cies|comentarios)|ya me dices|ya me dir[aá]s|ya me cuentas|ja em dius|ja em dir[aà]s|c[oó]mo lo ves|com ho veus|qu[eé] te parece|qu[eé] os parece|te propongo|os propongo|et proposo|us proposo|te pido|os pido|necesito que|necessito que|me gustar[ií]a que|podr[ií]as|podr[ií]ais|podries|let me know|please confirm|get back to me|look forward to|what do you think|propuesta|proposta|proposal|oferta|presupuesto|pressupost|si te va bien|si os va bien|si et va b[eé]|lo hablamos|ho parlem|pedir(te|os)? que|ll[aá]mame|truca'm)/i.test(texto);
 }
 async function cargarEspera(forzar) {
   if (estado.esperaCargando) return;
@@ -2911,7 +2911,7 @@ async function cargarEspera(forzar) {
     }
     // La pregunta suele ir al final («¿cómo lo ves?»): en los largos se mira tu texto entero, de seis en seis.
     const dudosos = lista.filter((e) => !e.pide && e.cortado).slice(0, 40);
-    const mirar = async () => { for (let e = dudosos.shift(); e; e = dudosos.shift()) { try { const c = await api("GET", `/me/messages/${id(e.id)}?$select=uniqueBody`); const entero = limpiarMio((c.uniqueBody || {}).content || ""); if (entero.length > e.texto.length) { e.pide = pideRespuesta(entero); } } catch (err) {} } };
+    const mirar = async () => { for (let e = dudosos.shift(); e; e = dudosos.shift()) { try { const c = await api("GET", `/me/messages/${id(e.id)}?$select=uniqueBody`); const entero = limpiarMio((c.uniqueBody || {}).content || ""); if (entero.length > e.texto.length) { const dominio = yo.split("@")[1] || ""; e.pide = pideRespuesta(entero) || (entero.length >= 400 && e.dirs.some((a) => !a.toLowerCase().endsWith("@" + dominio))); } } catch (err) {} } };
     await Promise.all([mirar(), mirar(), mirar(), mirar(), mirar(), mirar()]);
     // En la pestaña van los que pedían respuesta; el resto (instrucciones, reenvíos) queda aparte, plegado.
     estado.espera = lista.filter((e) => e.pide).sort((a, b) => a.fecha.localeCompare(b.fecha));
