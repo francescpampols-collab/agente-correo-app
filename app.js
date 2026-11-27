@@ -27,7 +27,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=98".slice(2));
+const VERSION = Number("v=99".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -815,7 +815,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=98"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=99"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -2855,6 +2855,10 @@ function pintarHoja() {
 // ---------- «Esperando»: lo que enviaste y nadie ha contestado ----------
 const ESPERA_DIAS = 2, ESPERA_TOPE = 30;
 const noEspero = () => new Set(leer("agente.noespero") || []);
+// «Pedías respuesta»: hay una pregunta, le pides que conteste o le haces una propuesta. Una instrucción («cancela esto») no cuenta.
+function pideRespuesta(texto) {
+  return /\?/.test(texto) || /\b(conf[ií]rma|dime\b|decidme|digues|digue'm|digueu|av[ií]sa|quedo a la espera|a la espera de|espero (tu|vuestra|su|tus|vuestros|la teva|la vostra|resp|noticias|not[ií]cies|comentarios)|ya me dices|ya me dir[aá]s|ya me cuentas|ja em dius|ja em dir[aà]s|c[oó]mo lo ves|com ho veus|qu[eé] te parece|qu[eé] os parece|te propongo|os propongo|et proposo|us proposo|te pido|os pido|necesito que|necessito que|me gustar[ií]a que|podr[ií]as|podr[ií]ais|podries|let me know|please confirm|get back to me|look forward to|what do you think)/i.test(texto);
+}
 async function cargarEspera(forzar) {
   if (estado.esperaCargando) return;
   if (!forzar && estado.esperaHora && Date.now() - estado.esperaHora < 10 * 60000) return;
@@ -2898,11 +2902,17 @@ async function cargarEspera(forzar) {
       // Un «gracias» o un «ok» no espera respuesta: fuera.
       if (texto.length < 12 && !/\?/.test(texto)) continue;
       // «Pedías respuesta»: hay una pregunta o le pides que conteste. Una instrucción («cancela esto») no cuenta.
-      const pide = /\?/.test(texto) || /\b(conf[ií]rma|dime\b|digues|digue'm|av[ií]sa|quedo a la espera|espero (tu|vuestra|su|la teva|la vostra|resp)|ya me dices|ja em dius|let me know|please confirm|get back to me)/i.test(texto);
+      const pide = pideRespuesta(texto);
+      // El extracto que da Outlook se corta a las pocas líneas: si no cabe entero, luego se lee el correo completo.
+      const cortado = (e.bodyPreview || "").length >= 240 && texto.length >= 180;
       lista.push({id: e.id, asunto: e.subject || "(sin asunto)", para: (e.toRecipients || []).map((t) => (t.emailAddress || {}).name || (t.emailAddress || {}).address || "").filter(Boolean), dirs,
         cc: (e.ccRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()).filter((a) => CORREO.test(a) && a.toLowerCase() !== yo),
-        fecha: e.sentDateTime, dias: Math.floor(dias), texto, pide, enlace: e.webLink || ""});
+        fecha: e.sentDateTime, dias: Math.floor(dias), texto, pide, cortado, enlace: e.webLink || ""});
     }
+    // La pregunta suele ir al final («¿cómo lo ves?»): en los largos se mira tu texto entero, de seis en seis.
+    const dudosos = lista.filter((e) => !e.pide && e.cortado).slice(0, 40);
+    const mirar = async () => { for (let e = dudosos.shift(); e; e = dudosos.shift()) { try { const c = await api("GET", `/me/messages/${id(e.id)}?$select=uniqueBody`); const entero = limpiarMio((c.uniqueBody || {}).content || ""); if (entero.length > e.texto.length) { e.pide = pideRespuesta(entero); } } catch (err) {} } };
+    await Promise.all([mirar(), mirar(), mirar(), mirar(), mirar(), mirar()]);
     // En la pestaña van los que pedían respuesta; el resto (instrucciones, reenvíos) queda aparte, plegado.
     estado.espera = lista.filter((e) => e.pide).sort((a, b) => a.fecha.localeCompare(b.fecha));
     estado.esperaOtros = lista.filter((e) => !e.pide).sort((a, b) => b.fecha.localeCompare(a.fecha));
