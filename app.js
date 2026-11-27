@@ -27,7 +27,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=101".slice(2));
+const VERSION = Number("v=102".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -815,7 +815,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=101"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=102"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -2969,7 +2969,9 @@ function panelEspera() {
   if (estado.esperaCargando && !estado.espera) return [el("div", {class: "vacio"}, el("b", {}, "Mirando lo que has enviado…"), "Un momento.")];
   const lista = estado.espera || [], otros = estado.esperaOtros || [];
   const cabeza = el("p", {class: "pide"}, `Correos tuyos de los últimos ${ESPERA_TOPE} días en los que preguntabas o pedías contestación, y llevan más de ${ESPERA_DIAS} sin respuesta. Primero los más antiguos.`);
-  const resto = otros.length ? el("details", {class: "resumen-ext"}, el("summary", {}, `Otros enviados sin respuesta (${otros.length}): instrucciones y reenvíos que quizá no la necesitan`), ...otros.map(cartaEspera)) : null;
+  const resto = otros.length ? el("details", {class: "resumen-ext", open: estado.esperaOtrosAbierto ? "" : null}, el("summary", {}, `Otros enviados sin respuesta (${otros.length}): instrucciones y reenvíos que quizá no la necesitan`), ...otros.map(cartaEspera)) : null;
+  // Se queda abierto hasta que Francesc lo pliegue o se acaben: tratar uno de la lista no lo cierra.
+  if (resto) resto.addEventListener("toggle", () => { estado.esperaOtrosAbierto = resto.open; });
   const cuerpo = lista.length ? [cabeza].concat(lista.map(cartaEspera)) : [el("div", {class: "vacio"}, el("b", {}, "Nadie te debe respuesta"), `No hay preguntas tuyas de más de ${ESPERA_DIAS} días sin contestar.`)];
   return resto ? cuerpo.concat(resto) : cuerpo;
 }
