@@ -25,7 +25,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=89".slice(2));
+const VERSION = Number("v=90".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -357,7 +357,7 @@ async function cargar() {
   $("recargar").disabled = false;
   pintar();
   if (estado.cargado) reintentarSalida();
-  cargarRespuestas().catch(() => {});
+  cargarEnviados().then(() => { if (!estado.sel) pintar(); return cargarRespuestas(); }).catch(() => cargarRespuestas().catch(() => {}));
   quienSoy().then(listarAdjuntos).then(() => { precargarFicheros(); prepararVisor(); return precargar(); }).then(cargarContactos).then(clasificarNuevos).catch(() => {});
 }
 function todos() { return [].concat(estado.datos.busca || [], estado.datos.nuevo || [], estado.datos.resp, estado.datos.news, estado.datos.arch, estado.datos.pend); }
@@ -746,7 +746,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=89"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=90"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -1212,9 +1212,23 @@ const CAT_PUESTA = "Reacción puesta: ";
 // ---------- lo que tú contestaste ----------
 // De cada correo ya respondido o reenviado se busca en Enviados tu mensaje del mismo hilo,
 // para tenerlo a mano en la tarjeta sin ir a Outlook.
+// Lo que has enviado tú en cada conversación (se lee de Enviados en una sola consulta): sirve para saber que un
+// hilo ya está contestado aunque el mensaje que se ve no sea exactamente el que respondiste.
+async function cargarEnviados() {
+  const j = await api("GET", "/me/mailFolders/sentitems/messages?" + new URLSearchParams({"$select": "conversationId,sentDateTime", "$orderby": "sentDateTime desc", "$top": "250"}));
+  const mapa = {};
+  for (const e of j.value || []) if (e.conversationId && (!mapa[e.conversationId] || e.sentDateTime > mapa[e.conversationId])) mapa[e.conversationId] = e.sentDateTime;
+  estado.hilosMios = mapa;
+}
+// "despues": contestaste después de recibir este mensaje. "antes": tu respuesta en el hilo es anterior a él.
+function enHilo(m) {
+  const mia = m && m.conversationId && estado.hilosMios ? estado.hilosMios[m.conversationId] : null;
+  if (!mia) return null;
+  return mia > (m.receivedDateTime || "") ? "despues" : "antes";
+}
 function respondido(m) {
   const cats = m.categories || [];
-  return cats.includes("Respondido") || cats.includes("Reenviado") || [102, 103, 104].includes(m.verbo);
+  return cats.includes("Respondido") || cats.includes("Reenviado") || [102, 103, 104].includes(m.verbo) || !!enHilo(m);
 }
 async function cargarRespuestas() {
   if (!estado.respuestas) estado.respuestas = {};
@@ -1270,13 +1284,15 @@ function marcas(m) {
   const cats = m.categories || [], lista = [];
   if (cats.includes("Respondido") || m.verbo === 102 || m.verbo === 103) lista.push(["hecho", "Respondido"]);
   if (cats.includes("Reenviado") || m.verbo === 104) lista.push(["hecho", "Reenviado"]);
+  if (!lista.length && enHilo(m) === "despues") lista.push(["hecho", "Respondido"]);
+  if (!lista.length && enHilo(m) === "antes") lista.push(["hecho", "Hilo contestado"]);
   const pend = reaccionPendiente(m);
   if (pend) lista.push(["cola", pend[0] + " en cola"]);
   const puesta = cats.find((x) => x.startsWith(CAT_PUESTA));
   if (puesta) { const r = REACCIONES.find((y) => y[1] === puesta.slice(CAT_PUESTA.length)); lista.push(["hecho", (r ? r[0] + " " : "") + "Reacción puesta"]); }
   if (cats.includes(CAT.baja)) lista.push(["cola", "Baja en trámite"]);
   if (enProceso.has(m.id)) lista.push(["cola", "Enviando…"]);
-  const abre = (texto) => texto === "Respondido" || texto === "Reenviado";
+  const abre = (texto) => texto === "Respondido" || texto === "Reenviado" || texto === "Hilo contestado";
   const verMia = (e) => {
     e.stopPropagation();
     if (!estado.miaAbierta) estado.miaAbierta = {};
