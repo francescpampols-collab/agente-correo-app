@@ -19,13 +19,15 @@ const iaCaidos = new Map();
 const IA_NOMBRES = {"claude-fable-5-2": "Fable 5.2", "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5"};
 const ESTILO_BASE = "Muy corto y directo, al grano en la primera frase. Idioma: catalán con el equipo interno de Pampols y con empresas catalanas; castellano con proveedores de fuera; inglés si le escriben en inglés. Saludo «Hola [nombre],» o ninguno. Cierre «Gràcies,» o «Gracias,» y en la línea siguiente «Francesc». Sin fórmulas de relleno, sin guiones largos, sin listas ni negritas.";
 const CAT = {resp: "Agente: responder", news: "Agente: boletín", arch: "Agente: archivar", pend: "Agente: pendiente", baja: "Agente: baja", manual: "Agente: baja manual"};
-const PESTANAS = [["nuevo", "Nuevos"], ["resp", "Responder"], ["news", "Boletines"], ["arch", "Archivar"], ["pend", "Tuyos"], ["espera", "Esperando"], ["busca", "Buscar"]];
+// No hay pestaña de «recién llegados»: lo que aún no está clasificado se ve en «Tuyos» con la marca «Clasificando…»
+// y pasa solo a su sitio en cuanto se clasifica.
+const PESTANAS = [["resp", "Responder"], ["news", "Boletines"], ["arch", "Archivar"], ["pend", "Tuyos"], ["espera", "Esperando"], ["busca", "Buscar"]];
 const SCOPE = "openid profile offline_access https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/User.Read";
 const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=94".slice(2));
+const VERSION = Number("v=95".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -82,6 +84,7 @@ function recuperarTrabajo() {
   for (const k of ["propuestas", "resumenes", "editados"]) if (t[k] && typeof t[k] === "object") estado[k] = t[k];
   if (t.redacta && typeof t.redacta === "object" && Array.isArray(t.redacta.para) && Array.isArray(t.redacta.cc) && MODOS[t.redacta.modo]) estado.redacta = t.redacta;
   if (PESTANAS.some(([k]) => k === t.tab)) estado.tab = t.tab;
+  else if (t.tab === "nuevo") estado.tab = "pend";
   estado.soloTexto = !!t.soloTexto;
   lugar.y = Number(t.y) || 0; lugar.yd = Number(t.yd) || 0; lugar.tab = typeof t.ytab === "string" ? t.ytab : "";
   return typeof t.sel === "string" ? t.sel : null;
@@ -746,7 +749,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=94"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=95"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -1285,6 +1288,7 @@ function respuestaMia(m) {
 }
 function marcas(m) {
   const cats = m.categories || [], lista = [];
+  if (m.sinClasificar) lista.push(["cola", leer("agente.ia") ? "Clasificando…" : "Sin clasificar todavía"]);
   if (cats.includes("Respondido") || m.verbo === 102 || m.verbo === 103) lista.push(["hecho", "Respondido"]);
   if (cats.includes("Reenviado") || m.verbo === 104) lista.push(["hecho", "Reenviado"]);
   if (!lista.length && enHilo(m) === "despues") lista.push(["hecho", "Respondido"]);
@@ -1676,11 +1680,14 @@ async function clasificarNuevos() {
     hacerDeFondo(async () => { for (const m of avisos) { await api("PATCH", `/me/messages/${id(m.id)}`, {isRead: true}); await archivar(m); } }, avisos.map((m) => m.id), "");
   }
   if (!leer("agente.ia")) return;
-  const cola = (estado.datos.nuevo || []).filter((m) => !clasificados.has(m.id) && !enProceso.has(m.id) && !avisoPropio(m)).slice(0, 8);
+  const cola = (estado.datos.nuevo || []).filter((m) => !clasificados.has(m.id) && !enProceso.has(m.id) && !avisoPropio(m)).slice(0, 20);
   if (!cola.length) return;
   clasificando = true;
-  try {
-    for (const m of cola) {
+  let parar = false;
+  // Tres a la vez, para que lo recién llegado pase a su sitio cuanto antes.
+  const uno = async () => {
+    while (cola.length && !parar) {
+      const m = cola.shift();
       clasificados.add(m.id);
       try {
         const lista = await clasificarUno(m);
@@ -1689,9 +1696,10 @@ async function clasificarNuevos() {
         estado.datos[lista] = [m].concat(estado.datos[lista]).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || ""));
         if (estado.sel === m.id) pintarDetalle();
         pintar();
-      } catch (e) { if (/clave|activa/.test(e.message)) break; }
+      } catch (e) { if (/clave|activa/.test(e.message)) parar = true; }
     }
-  } finally { clasificando = false; }
+  };
+  try { await Promise.all([uno(), uno(), uno()]); } finally { clasificando = false; }
 }
 async function redactarIA(m, r) {
   const sistema = `Redactas correos en nombre de Francesc Pampols, administrador de Grup PAMPOLS, para que él los revise y los envíe. Escribe exactamente como él:\n${await leerEstilo()}\n\n${AVISO_IA}\n${AVISO_FIRMA}\n${AVISO_DESTINO}\nDevuelve solo el texto del correo, listo para enviar: sin asunto, sin comillas y sin explicaciones. No inventes datos, importes, fechas ni compromisos: si falta algo que solo Francesc sabe, escribe [FALTA: qué dato] en su sitio.`;
@@ -2462,7 +2470,7 @@ function construirDetalle(d) {
 function pintar() {
   const d = estado.datos;
   const g = grupos();
-  const n = {busca: d.busca.length, nuevo: d.nuevo.length, resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length, espera: (estado.espera || []).length};
+  const n = {busca: d.busca.length, nuevo: d.nuevo.length, resp: d.resp.length, news: g.length, arch: d.arch.length, pend: d.pend.length + d.nuevo.length, espera: (estado.espera || []).length};
   // Mientras se lee el buzón no se dice «nada pendiente», y mientras quedan cambios por guardar se avisa.
   $("resumen").textContent = enProceso.size ? `Guardando ${enProceso.size} ${enProceso.size === 1 ? "cambio" : "cambios"} en Outlook… no cierres ni recargues`
     : !estado.cargado ? "Leyendo tu bandeja…"
@@ -2480,11 +2488,11 @@ function pintar() {
   }
   else if (estado.tab === "busca") cartas = [panelBusqueda()].concat(panelFuera(), d.busca.map(cartaBusqueda), !d.busca.length && estado.buscado && !estado.buscando ? [el("p", {class: "pide"}, "No hay correos archivados con ese asunto o remitente.")] : []);
   else if (estado.tab === "espera") { cartas = panelEspera(); if (estado.cargado) cargarEspera(); }
-  else cartas = d[estado.tab].map(cartaSimple);
+  else if (estado.tab === "pend") cartas = d.nuevo.concat(d.pend).sort((a, b) => (b.receivedDateTime || "").localeCompare(a.receivedDateTime || "")).map(cartaSimple);
+  else cartas = (d[estado.tab] || []).map(cartaSimple);
   const dia = estado.tab !== "busca" && estado.tab !== "espera" ? resumenDelDia() : null;
   if (dia) cartas.unshift(dia);
-  if (estado.tab === "nuevo" && cartas.length) cartas.unshift(el("p", {class: "pide"}, leer("agente.ia") ? "Recién llegados. Se clasifican solos en unos segundos; puedes abrirlos ya." : "Recién llegados. El agente todavía no los ha clasificado; puedes abrirlos, contestarlos o archivarlos ya."));
-  $("lista").replaceChildren(...(cartas.length ? cartas : [el("div", {class: "vacio"}, el("b", {}, "Nada pendiente aquí"), estado.tab === "nuevo" ? "No hay correos nuevos sin clasificar." : "La bandeja de entrada solo guarda lo que queda por resolver.")]));
+  $("lista").replaceChildren(...(cartas.length ? cartas : [el("div", {class: "vacio"}, el("b", {}, "Nada pendiente aquí"), "La bandeja de entrada solo guarda lo que queda por resolver.")]));
   if (!estado.cargado && estado.tab !== "busca") $("lista").replaceChildren(el("div", {class: "vacio"}, el("b", {}, "Leyendo tu bandeja…"), "Un momento."));
   pintarDetalle();
 
