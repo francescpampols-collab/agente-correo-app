@@ -339,3 +339,6 @@ nav button{flex:1 0 auto;padding-left:12px;padding-right:12px}
 .dia .eti.grande{font-size:1.15em;color:#13345B}
 .dia-linea{display:block;width:100%;text-align:left;border:0;background:transparent;padding:8px 0;border-top:1px solid #E3E8EE;font:inherit;color:inherit;cursor:pointer;overflow-wrap:anywhere}
 .dia-linea b{font-weight:600;color:#13345B}
+.buscador label.ancho{flex:1 1 100%}
+.motivo{border-left:3px solid #1E7B34;padding-left:10px}
+.nota-ia{background:#fff;border-left:5px solid var(--marino);padding:12px 14px;border-radius:8px}
