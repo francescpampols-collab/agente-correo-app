@@ -27,7 +27,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=97".slice(2));
+const VERSION = Number("v=98".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -602,9 +602,16 @@ async function cargarHilo(mid) {
     let conv = m.conversationId, fecha = m.receivedDateTime;
     if (!conv || !fecha) { const x = await api("GET", `/me/messages/${id(mid)}?$select=conversationId,receivedDateTime`); conv = m.conversationId = x.conversationId; fecha = fecha || x.receivedDateTime; }
     if (!conv) { estado.hilos[mid] = {antes: [], despues: []}; return; }
-    const j = await api("GET", "/me/messages?$filter=" + encodeURIComponent(`conversationId eq '${String(conv).replace(/'/g, "''")}'`) + "&$select=" + CAMPOS_BUSCA + ",isDraft,sentDateTime&$top=100");
-    const vistos = new Set();
-    const otros = (j.value || []).filter((c) => c.id !== mid && !c.isDraft && !fuera.has(c.parentFolderId))
+    // Además de la conversación, los correos con el mismo asunto: hay quien contesta rompiendo el hilo.
+    const limpio = (t) => sinTildes(String(t || "").replace(/^(\s*(re|rv|fw|fwd|tr|res)\s*:\s*)+/i, "")).toLowerCase().replace(/\s+/g, " ").trim();
+    const asunto = limpio(m.subject);
+    const frase = String(m.subject || "").replace(/^(\s*(re|rv|fw|fwd|tr|res)\s*:\s*)+/i, "").replace(/["\\():*]/g, " ").replace(/\s+/g, " ").trim();
+    const [j, k] = await Promise.all([
+      api("GET", "/me/messages?$filter=" + encodeURIComponent(`conversationId eq '${String(conv).replace(/'/g, "''")}'`) + "&$select=" + CAMPOS_BUSCA + ",isDraft,sentDateTime&$top=100"),
+      asunto.length >= 12 ? api("GET", "/me/messages?" + new URLSearchParams({"$search": `"subject:\\"${frase}\\""`, "$select": CAMPOS_BUSCA + ",isDraft,sentDateTime", "$top": "40"})).catch(() => null) : null]);
+    const mismos = ((k || {}).value || []).filter((c) => limpio(c.subject) === asunto);
+    const vistos = new Set([String(fecha).slice(0, 16) + "|" + dir(m)]), ids = new Set();
+    const otros = (j.value || []).concat(mismos).filter((c) => !ids.has(c.id) && ids.add(c.id)).filter((c) => c.id !== mid && !c.isDraft && !fuera.has(c.parentFolderId))
       .map((c) => { c.cuando = c.receivedDateTime || c.sentDateTime || ""; c.mio = c.parentFolderId === estado.enviadosId; return c; })
       // El mismo mensaje puede estar dos veces (en Enviados y recibido en copia): se cuenta una.
       .filter((c) => { const k = c.cuando.slice(0, 16) + "|" + dir(c); if (vistos.has(k)) return false; vistos.add(k); return true; })
@@ -808,7 +815,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=97"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=98"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
