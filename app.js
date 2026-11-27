@@ -27,7 +27,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=100".slice(2));
+const VERSION = Number("v=101".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -815,7 +815,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=100"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=101"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -2699,7 +2699,7 @@ function pantallaInicio(pedirConfig) {
 }
 function salir() {
   borrar("agente.tok");
-  borrar("agente.ia");
+  borrar("agente.ia"); borrar("agente.espera"); borrar("agente.pide");
   clearTimeout(relojTrabajo);
   borrar("agente.trabajo");
   borrar("agente.contactos");
@@ -2863,6 +2863,8 @@ async function cargarEspera(forzar) {
   if (estado.esperaCargando) return;
   if (!forzar && estado.esperaHora && Date.now() - estado.esperaHora < 10 * 60000) return;
   estado.esperaCargando = true;
+  // Mientras se vuelve a mirar, se enseña la última lista conocida: la pestaña no se queda en blanco.
+  if (!estado.espera) { const g = leer("agente.espera"); if (g && Array.isArray(g.espera) && Date.now() - g.hora < 3 * 864e5) { const fuera0 = noEspero(); const al = (l) => (l || []).filter((e) => !fuera0.has(e.id)).map((e) => Object.assign(e, {dias: Math.floor((Date.now() - Date.parse(e.fecha)) / 864e5)})); estado.espera = al(g.espera); estado.esperaOtros = al(g.otros); } }
   if (estado.tab === "espera") pintar();
   try {
     const desde = new Date(Date.now() - (ESPERA_TOPE + 5) * 864e5).toISOString();
@@ -2910,13 +2912,31 @@ async function cargarEspera(forzar) {
         fecha: e.sentDateTime, dias: Math.floor(dias), texto, pide, cortado, enlace: e.webLink || ""});
     }
     // La pregunta suele ir al final («¿cómo lo ves?»): en los largos se mira tu texto entero, de seis en seis.
-    const dudosos = lista.filter((e) => !e.pide && e.cortado).slice(0, 40);
-    const mirar = async () => { for (let e = dudosos.shift(); e; e = dudosos.shift()) { try { const c = await api("GET", `/me/messages/${id(e.id)}?$select=uniqueBody`); const entero = limpiarMio((c.uniqueBody || {}).content || ""); if (entero.length > e.texto.length) { const dominio = yo.split("@")[1] || ""; e.pide = pideRespuesta(entero) || (entero.length >= 400 && e.dirs.some((a) => !a.toLowerCase().endsWith("@" + dominio))); } } catch (err) {} } };
-    await Promise.all([mirar(), mirar(), mirar(), mirar(), mirar(), mirar()]);
+    const sabido = leer("agente.pide") || {};
+    const dominio = yo.split("@")[1] || "";
+    const dudosos = [];
+    for (const e of lista) { if (e.pide || !e.cortado) continue; if (e.id in sabido) e.pide = !!sabido[e.id]; else if (dudosos.length < 60) dudosos.push(e); }
+    const lotes = [];
+    for (let k = 0; k < dudosos.length; k += 20) lotes.push(dudosos.slice(k, k + 20));
+    await Promise.all(lotes.map(async (lote) => {
+      try {
+        const res = await api("POST", "/$batch", {requests: lote.map((e, k) => ({id: String(k), method: "GET", url: `/me/messages/${id(e.id)}?$select=uniqueBody`, headers: {Prefer: 'IdType="ImmutableId", outlook.body-content-type="text"'}}))});
+        for (const r of res.responses || []) {
+          const e = lote[Number(r.id)];
+          if (!e || r.status !== 200) continue;
+          const entero = limpiarMio(((r.body || {}).uniqueBody || {}).content || "");
+          if (entero.length > e.texto.length) e.pide = pideRespuesta(entero) || (entero.length >= 400 && e.dirs.some((a) => !a.toLowerCase().endsWith("@" + dominio)));
+          sabido[e.id] = e.pide ? 1 : 0;
+        }
+      } catch (err) {}
+    }));
+    const vivos = new Set(lista.map((e) => e.id));
+    guardar("agente.pide", Object.fromEntries(Object.entries(sabido).filter(([k]) => vivos.has(k))));
     // En la pestaña van los que pedían respuesta; el resto (instrucciones, reenvíos) queda aparte, plegado.
     estado.espera = lista.filter((e) => e.pide).sort((a, b) => a.fecha.localeCompare(b.fecha));
     estado.esperaOtros = lista.filter((e) => !e.pide).sort((a, b) => b.fecha.localeCompare(a.fecha));
     estado.esperaHora = Date.now();
+    guardar("agente.espera", {hora: Date.now(), espera: estado.espera, otros: estado.esperaOtros});
   } catch (e) { avisar("No se ha podido leer lo enviado: " + e.message); }
   estado.esperaCargando = false;
   pintar();
