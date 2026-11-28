@@ -1,1 +1,1 @@
-window.agenteVersion = Number("v=104".slice(2));
+window.agenteVersion = Number("v=105".slice(2));
