@@ -27,7 +27,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=106".slice(2));
+const VERSION = Number("v=107".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -815,7 +815,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=106"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=107"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -2714,7 +2714,7 @@ function pantallaInicio(pedirConfig) {
 }
 function salir() {
   borrar("agente.tok");
-  borrar("agente.ia"); borrar("agente.espera"); borrar("agente.pide"); borrar("agente.pide2"); borrar("agente.pide.ia"); borrar("agente.pide.ia2");
+  borrar("agente.ia"); borrar("agente.espera"); borrar("agente.pide"); borrar("agente.pide2"); borrar("agente.contestados"); borrar("agente.pide.ia"); borrar("agente.pide.ia2");
   clearTimeout(relojTrabajo);
   borrar("agente.trabajo");
   borrar("agente.contactos");
@@ -2911,7 +2911,7 @@ async function cargarEspera(forzar) {
         // Lo recibido en ese tiempo, en cualquier carpeta: solo hace falta saber en qué conversación y cuándo.
         const lista = [];
         let ruta = "/me/messages?" + new URLSearchParams({"$filter": `receivedDateTime ge ${desde}`, "$select": "conversationId,receivedDateTime,from,isDraft", "$orderby": "receivedDateTime desc", "$top": "500"});
-        for (let vuelta = 0; vuelta < 4 && ruta; vuelta++) {
+        for (let vuelta = 0; vuelta < 8 && ruta; vuelta++) {
           const j = await api("GET", ruta);
           lista.push(...(j.value || []));
           const sig = j["@odata.nextLink"];
@@ -2991,20 +2991,27 @@ async function cargarEspera(forzar) {
     if (!juzgados) for (const e of nuevos) { if (!(e.id in sabido)) { e.nivel = nivelEspera(e.entero || e.texto, e.asunto); if (!conIA) sabido[e.id] = e.nivel; } }
     lista.forEach((e) => { if (e.nivel == null) e.nivel = nivelEspera(e.texto, e.asunto); e.pide = e.nivel === 2; });
     // Los más antiguos que lo recibido que se ha traído: se mira su conversación, por si ya contestaron.
+    const yaContestados = new Set(leer("agente.contestados") || []);
+    lista.forEach((e) => { if (yaContestados.has(e.id)) e.contestado = true; });
     if (rec.cubre) {
-      const viejos = lista.filter((e) => e.nivel > 0 && e.fecha < rec.cubre).slice(0, 40);
-      for (let k = 0; k < viejos.length; k += 4) {
-        const grupo = viejos.slice(k, k + 4);
-        try {
-          const res = await api("POST", "/$batch", {requests: grupo.map((e, n) => ({id: String(n), method: "GET", url: "/me/messages?$filter=" + encodeURIComponent(`conversationId eq '${String(e.conv).replace(/'/g, "''")}'`) + "&$select=receivedDateTime,from,isDraft&$top=50", headers: {Prefer: 'IdType="ImmutableId"'}}))});
-          for (const r of res.responses || []) {
-            const e = grupo[Number(r.id)];
-            if (!e || r.status !== 200) continue;
-            if (((r.body || {}).value || []).some((c) => !c.isDraft && (c.receivedDateTime || "") > e.fecha && String(((c.from || {}).emailAddress || {}).address || "").toLowerCase() !== yo)) e.contestado = true;
-          }
-        } catch (err) {}
-      }
+      const viejos = lista.filter((e) => e.nivel > 0 && !e.contestado && e.fecha < rec.cubre).slice(0, 240);
+      const grupos = [];
+      for (let k = 0; k < viejos.length; k += 4) grupos.push(viejos.slice(k, k + 4));
+      const cadena = async () => {
+        for (let grupo = grupos.shift(); grupo; grupo = grupos.shift()) {
+          try {
+            const res = await api("POST", "/$batch", {requests: grupo.map((e, n) => ({id: String(n), method: "GET", url: "/me/messages?$filter=" + encodeURIComponent(`conversationId eq '${String(e.conv).replace(/'/g, "''")}'`) + "&$select=receivedDateTime,from,isDraft&$top=50", headers: {Prefer: 'IdType="ImmutableId"'}}))});
+            for (const r of res.responses || []) {
+              const e = grupo[Number(r.id)];
+              if (!e || r.status !== 200) continue;
+              if (((r.body || {}).value || []).some((c) => !c.isDraft && (c.receivedDateTime || "") > e.fecha && String(((c.from || {}).emailAddress || {}).address || "").toLowerCase() !== yo)) e.contestado = true;
+            }
+          } catch (err) {}
+        }
+      };
+      await Promise.all([cadena(), cadena()]);
     }
+    guardar("agente.contestados", lista.filter((e) => e.contestado).map((e) => e.id).slice(0, 600));
     for (let k = lista.length - 1; k >= 0; k--) if (lista[k].contestado) lista.splice(k, 1);
     lista.forEach((e) => { delete e.entero; });
     const vivos = new Set(lista.map((e) => e.id));
