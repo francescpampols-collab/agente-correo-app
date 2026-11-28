@@ -27,7 +27,7 @@ const REDIR = location.origin + location.pathname;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const $ = (id) => document.getElementById(id);
 // Versión de la app que está cargada. Si se publica otra más nueva, se avisa para recargar.
-const VERSION = Number("v=105".slice(2));
+const VERSION = Number("v=106".slice(2));
 function mirarVersion() {
   const g = document.createElement("script");
   g.src = "version.js?t=" + Date.now();
@@ -815,7 +815,7 @@ window.addEventListener("message", (e) => {
   }
 });
 function marcoCorreo(html, titulo) {
-  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=105"});
+  const marco = el("iframe", {class: "marco", title: titulo || "Correo", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer", src: "lector.html?v=106"});
   marco.html = html;
   marcos.push(marco);
   // El visor con formato se descarga del servidor de la app. Si esa red no llega a él, a los 9 segundos
@@ -2895,7 +2895,18 @@ async function cargarEspera(forzar) {
     const desde = new Date(Date.now() - (ESPERA_TOPE + 5) * 864e5).toISOString();
     const yo = (estado.yo || "").toLowerCase();
     const [env, rec] = await Promise.all([
-      api("GET", "/me/mailFolders/sentitems/messages?" + new URLSearchParams({"$filter": `sentDateTime ge ${desde}`, "$select": "id,subject,toRecipients,ccRecipients,sentDateTime,conversationId,bodyPreview,webLink", "$orderby": "sentDateTime desc", "$top": "250"})),
+      (async () => {
+        // Todo lo enviado en ese tiempo (Francesc envía muchos correos al día: con 250 no se llega ni a una semana).
+        const lista = [];
+        let ruta = "/me/mailFolders/sentitems/messages?" + new URLSearchParams({"$filter": `sentDateTime ge ${desde}`, "$select": "id,subject,toRecipients,ccRecipients,sentDateTime,conversationId,bodyPreview,webLink", "$orderby": "sentDateTime desc", "$top": "250"});
+        for (let vuelta = 0; vuelta < 8 && ruta; vuelta++) {
+          const j = await api("GET", ruta);
+          lista.push(...(j.value || []));
+          const sig = j["@odata.nextLink"];
+          ruta = sig ? sig.replace("https://graph.microsoft.com/v1.0", "") : null;
+        }
+        return {value: lista};
+      })(),
       (async () => {
         // Lo recibido en ese tiempo, en cualquier carpeta: solo hace falta saber en qué conversación y cuándo.
         const lista = [];
@@ -2906,6 +2917,8 @@ async function cargarEspera(forzar) {
           const sig = j["@odata.nextLink"];
           ruta = sig ? sig.replace("https://graph.microsoft.com/v1.0", "") : null;
         }
+        // Hasta dónde llega lo recibido que se ha podido traer: de lo anterior no se sabe si contestaron.
+        lista.cubre = ruta && lista.length ? lista[lista.length - 1].receivedDateTime : "";
         return lista;
       })()]);
     const ultimaAjena = {};
@@ -2925,7 +2938,9 @@ async function cargarEspera(forzar) {
       const dirs = (e.toRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()).filter((a) => CORREO.test(a));
       if (!dirs.length || dirs.every((a) => a.toLowerCase() === yo)) continue;
       // Solo tu texto: fuera lo que arrastra el correo reenviado o citado debajo.
-      const texto = limpiarMio(e.bodyPreview || "").split(/\n?_{6,}|\n\s*(?:From|De|Enviado|Sent)\s*:|-----\s*(?:Original|Mensaje)/i)[0].trim();
+      // Una reacción (un «me gusta») no es un correo.
+      if (/reacted to your message|ha reaccionado a tu mensaje|reaccion[oó] a tu mensaje/i.test(e.bodyPreview || "")) continue;
+      const texto = limpiarMio(e.bodyPreview || "").split(/\n?_{6,}|\n\s*(?:From|De|Enviado|Sent)\s*:|-----\s*(?:Original|Mensaje)/i)[0].replace(/\s*Francesc(\s+Xavier)?\s+P[aà]mpols\s+Pampols Packaging[\s\S]*$/i, "").trim();
       // Un «gracias» o un «ok» no espera respuesta: fuera.
       if (texto.length < 12 && !/\?/.test(texto)) continue;
       // «Pedías respuesta»: hay una pregunta o le pides que conteste. Una instrucción («cancela esto») no cuenta.
@@ -2934,7 +2949,7 @@ async function cargarEspera(forzar) {
       const cortado = (e.bodyPreview || "").length >= 240 && texto.length >= 180;
       lista.push({id: e.id, asunto: e.subject || "(sin asunto)", para: (e.toRecipients || []).map((t) => (t.emailAddress || {}).name || (t.emailAddress || {}).address || "").filter(Boolean), dirs,
         cc: (e.ccRecipients || []).map((t) => String((t.emailAddress || {}).address || "").trim()).filter((a) => CORREO.test(a) && a.toLowerCase() !== yo),
-        fecha: e.sentDateTime, dias: Math.floor(dias), texto, pide, cortado, enlace: e.webLink || ""});
+        fecha: e.sentDateTime, conv: e.conversationId, dias: Math.floor(dias), texto, pide, cortado, enlace: e.webLink || ""});
     }
     // La pregunta suele ir al final («¿cómo lo ves?»): en los largos se mira tu texto entero, de seis en seis.
     // Quién decide si un enviado espera contestación: con la IA activada, un modelo rápido lee tu texto entero
@@ -2943,7 +2958,7 @@ async function cargarEspera(forzar) {
     const sabido = leer(conIA ? "agente.pide.ia2" : "agente.pide2") || {};
     const dominio = yo.split("@")[1] || "";
     const nuevos = [];
-    for (const e of lista) { if (e.id in sabido) e.nivel = sabido[e.id]; else if (nuevos.length < 60) nuevos.push(e); }
+    for (const e of lista) { if (e.id in sabido) e.nivel = sabido[e.id]; else if (nuevos.length < 120) nuevos.push(e); }
     // Tu texto entero de los que el extracto deja cortados, en lotes de 20.
     const largos = nuevos.filter((e) => e.cortado), lotes = [];
     for (let k = 0; k < largos.length; k += 20) lotes.push(largos.slice(k, k + 20));
@@ -2975,6 +2990,22 @@ async function cargarEspera(forzar) {
     }
     if (!juzgados) for (const e of nuevos) { if (!(e.id in sabido)) { e.nivel = nivelEspera(e.entero || e.texto, e.asunto); if (!conIA) sabido[e.id] = e.nivel; } }
     lista.forEach((e) => { if (e.nivel == null) e.nivel = nivelEspera(e.texto, e.asunto); e.pide = e.nivel === 2; });
+    // Los más antiguos que lo recibido que se ha traído: se mira su conversación, por si ya contestaron.
+    if (rec.cubre) {
+      const viejos = lista.filter((e) => e.nivel > 0 && e.fecha < rec.cubre).slice(0, 40);
+      for (let k = 0; k < viejos.length; k += 4) {
+        const grupo = viejos.slice(k, k + 4);
+        try {
+          const res = await api("POST", "/$batch", {requests: grupo.map((e, n) => ({id: String(n), method: "GET", url: "/me/messages?$filter=" + encodeURIComponent(`conversationId eq '${String(e.conv).replace(/'/g, "''")}'`) + "&$select=receivedDateTime,from,isDraft&$top=50", headers: {Prefer: 'IdType="ImmutableId"'}}))});
+          for (const r of res.responses || []) {
+            const e = grupo[Number(r.id)];
+            if (!e || r.status !== 200) continue;
+            if (((r.body || {}).value || []).some((c) => !c.isDraft && (c.receivedDateTime || "") > e.fecha && String(((c.from || {}).emailAddress || {}).address || "").toLowerCase() !== yo)) e.contestado = true;
+          }
+        } catch (err) {}
+      }
+    }
+    for (let k = lista.length - 1; k >= 0; k--) if (lista[k].contestado) lista.splice(k, 1);
     lista.forEach((e) => { delete e.entero; });
     const vivos = new Set(lista.map((e) => e.id));
     guardar(conIA ? "agente.pide.ia2" : "agente.pide2", Object.fromEntries(Object.entries(sabido).filter(([k]) => vivos.has(k))));
